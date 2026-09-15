@@ -1,0 +1,15 @@
+# Keep the build context small and free of host-specific artefacts.
+**/node_modules
+**/target
+**/dist
+frontend/.vite
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+workspace
+docs/**/*.png
+README.md
+CONTRIBUTING.md
+**/.DS_Store

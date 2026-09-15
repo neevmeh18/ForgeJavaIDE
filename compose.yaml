@@ -1,0 +1,45 @@
+# Forge — local development stack.
+#
+#   docker compose up --build      start (http://localhost:3000)
+#   docker compose down            stop
+#   docker compose logs -f         follow logs
+#
+# One service, because one service is all the framework needs. No database, cache or broker is
+# started: none is required, and requiring one would make the first run slower and more fragile
+# for no architectural gain.
+
+services:
+  forge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: forge-ide:0.1.0
+    container_name: forge
+    ports:
+      - "${IDE_PORT:-3000}:3000"
+    environment:
+      # Change IDE_AUTH_PASSWORD before exposing this beyond localhost. Without it the backend
+      # falls back to a development default and says so, loudly, at startup.
+      IDE_AUTH_USER: "${IDE_AUTH_USER:-developer}"
+      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:-forge}"
+      IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
+      IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
+    volumes:
+      # Point IDE_WORKSPACE at any directory to work on it: IDE_WORKSPACE=~/code docker compose up
+      - "${IDE_WORKSPACE:-./workspace}:/workspace"
+      # Settings and persisted workbench state outlive the container; caches do not belong here.
+      - forge-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 25s
+      retries: 10
+
+volumes:
+  forge-data:

@@ -1,0 +1,21 @@
+{
+  "id": "demo",
+  "name": "Forge Demo Extension",
+  "version": "0.1.0",
+  "description": "Demonstrates the public extension API: commands, queries, events, contributions and settings.",
+  "main": "dev.forge.ext.demo.DemoExtension",
+  "activationEvents": [
+    "onCommand:demo.countFiles",
+    "onWorkspace"
+  ],
+  "contributes": {
+    "settings": [
+      {
+        "key": "demo.announceSaves",
+        "type": "boolean",
+        "default": false,
+        "description": "Log every save this extension observes."
+      }
+    ]
+  }
+}

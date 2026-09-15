@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>dev.forge</groupId>
+    <artifactId>forge-parent</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>forge-core</artifactId>
+  <name>Forge Core</name>
+  <description>
+    Framework core and feature APIs. Depends on nothing but the JDK: no transport,
+    no serialization library, no UI, no infrastructure. Everything here is the part
+    of the framework an IDE product and its extensions program against.
+  </description>
+</project>
