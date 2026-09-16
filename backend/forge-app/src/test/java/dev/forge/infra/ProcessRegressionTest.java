@@ -49,7 +49,7 @@ public class ProcessRegressionTest {
     @Test public void subprocessEnvironmentHasOnlyAllowlistedNames() throws Exception {
         var result = Processes.run(temporary.newFolder().toPath(), Duration.ofSeconds(3), List.of("/usr/bin/env"));
         assertTrue(result.ok());
-        Set<String> allowed = Set.of("PATH", "HOME", "LANG", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS");
+        Set<String> allowed = Set.of("PATH", "HOME", "LANG", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT", "GIT_ASKPASS");
         for (String line : result.output().lines().toList()) assertTrue(allowed.contains(line.substring(0, line.indexOf('='))));
     }
 

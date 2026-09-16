@@ -140,7 +140,11 @@ export class Explorer {
       menu.append(button);
     }
     document.body.append(menu);
-    const dismiss = () => {
+    // Dismiss only when the pointer is outside the menu.  The old document-level
+    // mousedown handler removed the menu before a context item's `click` event
+    // could fire, which made actions such as Rename and Delete appear broken.
+    const dismiss = (dismissEvent: MouseEvent) => {
+      if (menu.contains(dismissEvent.target as Node)) return;
       menu.remove();
       document.removeEventListener('mousedown', dismiss);
     };
