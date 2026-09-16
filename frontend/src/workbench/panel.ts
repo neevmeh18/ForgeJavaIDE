@@ -70,15 +70,27 @@ export class Panel {
     } else if (viewId === 'tasks') {
       this.body.append(this.tasks);
       void this.renderTasks();
-    } else {
+    } else if (viewId === 'problems') {
       this.body.append(this.problems);
       this.renderProblems();
     }
+    if (!this.body.childElementCount) this.body.append(el('p', { class: 'view-empty', text: 'This view has no supported renderer.' }));
     this.renderTabs();
   }
 
   problemCount(): number {
     return [...this.diagnostics.values()].reduce((total, list) => total + list.length, 0);
+  }
+
+  resetWorkspace(): void {
+    clear(this.tasks);
+    this.diagnostics.clear();
+    this.renderProblems();
+    this.terminal.resetWorkspace();
+  }
+
+  applySettings(settings: Map<string, unknown>): void {
+    this.terminal.applySettings(settings);
   }
 
   private renderTabs(): void {

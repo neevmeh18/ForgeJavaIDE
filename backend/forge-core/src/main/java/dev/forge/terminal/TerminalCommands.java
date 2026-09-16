@@ -34,7 +34,7 @@ public final class TerminalCommands {
                         ctx.args().integer("rows", 24)));
 
         commands.register(
-                CommandDescriptor.of("terminal.write", "Terminal", "Send Terminal Input")
+                CommandDescriptor.of("terminal.write", "Terminal", "Send Terminal Input") .withArguments(new CommandDescriptor.Argument("terminalId", "string", "terminalId"), new CommandDescriptor.Argument("data", "string", "data"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     terminals.write(ctx.args().terminalId("terminalId"), ctx.requireWorkspace(),
@@ -43,7 +43,7 @@ public final class TerminalCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("terminal.resize", "Terminal", "Resize Terminal").workspaceScoped(),
+                CommandDescriptor.of("terminal.resize", "Terminal", "Resize Terminal") .withArguments(new CommandDescriptor.Argument("terminalId", "string", "terminalId")).workspaceScoped(),
                 ctx -> {
                     terminals.resize(ctx.args().terminalId("terminalId"), ctx.requireWorkspace(),
                             ctx.args().integer("columns", 80), ctx.args().integer("rows", 24));
@@ -51,7 +51,7 @@ public final class TerminalCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("terminal.kill", "Terminal", "Kill Terminal")
+                CommandDescriptor.of("terminal.kill", "Terminal", "Kill Terminal") .withArguments(new CommandDescriptor.Argument("terminalId", "string", "terminalId"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     terminals.kill(ctx.args().terminalId("terminalId"), ctx.requireWorkspace());
@@ -66,8 +66,8 @@ public final class TerminalCommands {
                 QueryDescriptor.of("terminal.scrollback", "Recent output for one terminal").workspaceScoped(),
                 (ctx, args) -> terminals.scrollback(args.terminalId("terminalId"), ctx.requireWorkspace()));
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+`", "terminal.create", null));
+        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+`", "workbench.newTerminal", null));
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(
-                ContributionRegistry.MENU_VIEW, "terminal.create", "New Terminal", "panel", 10));
+                ContributionRegistry.MENU_VIEW, "workbench.newTerminal", "New Terminal", "panel", 10));
     }
 }

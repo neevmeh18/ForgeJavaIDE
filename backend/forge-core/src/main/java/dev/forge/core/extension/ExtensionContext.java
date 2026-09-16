@@ -130,6 +130,8 @@ public final class ExtensionContext {
     }
 
     public void contributeView(String id, String title, String container, String icon, int order) {
+        if (!java.util.Set.of("explorer", "search", "scm", "extensions", "settings", "debug", "terminal", "problems", "tasks").contains(id))
+            throw ForgeException.unsupported("Custom view renderers are not supported; use a supported built-in view id");
         disposables.add(contributions.addView(new ContributionRegistry.View(
                 id, title, container, icon, order, extensionId.value())));
     }

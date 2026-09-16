@@ -30,6 +30,16 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
     private static final int ITERATIONS = 210_000;
     private static final int KEY_LENGTH_BITS = 256;
 
+    private final java.util.concurrent.Semaphore checks = new java.util.concurrent.Semaphore(2);
+    private long windowStart;
+    private int attempts;
+
+    private synchronized void admit() {
+        long now = System.nanoTime();
+        if (now - windowStart > 60_000_000_000L) { windowStart = now; attempts = 0; }
+        if (++attempts > 30) throw ForgeException.unavailable("Login temporarily rate limited");
+    }
+
     private final String username;
     private final byte[] salt = new byte[16];
     private final byte[] expectedHash;
@@ -43,7 +53,7 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
         } finally {
             java.util.Arrays.fill(secret, '\0');
         }
-        log.with("username", username).info("Password authentication configured");
+        log.info("Password authentication configured");
     }
 
     @Override
@@ -55,12 +65,15 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
     public Optional<User> authenticate(Credentials credentials) {
         // Always derive, even for an unknown username: skipping the work would let an attacker
         // distinguish "no such user" from "wrong password" by timing alone.
-        byte[] candidate = derive(credentials.secret());
+        admit();
+        if (!checks.tryAcquire()) throw ForgeException.unavailable("Login busy; retry shortly");
+        byte[] candidate;
+        try { candidate = derive(credentials.secret()); } finally { checks.release(); }
         boolean matches = MessageDigest.isEqual(expectedHash, candidate)
                 & username.equals(credentials.username());
         java.util.Arrays.fill(candidate, (byte) 0);
         if (!matches) {
-            log.with("username", credentials.username()).info("Authentication rejected");
+            log.info("Authentication rejected");
             return Optional.empty();
         }
         return Optional.of(new User(dev.forge.core.Ids.UserId.of(username), username, id(),

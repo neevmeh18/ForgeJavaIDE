@@ -9,3 +9,5 @@ dist/
 .forge-data/
 workspace/*
 !workspace/.gitkeep
+
+local_analysis/

@@ -19,7 +19,7 @@ public final class SettingsCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("settings.set", "Settings", "Change Setting")
+                CommandDescriptor.of("settings.set", "Settings", "Change Setting") .withArguments(new CommandDescriptor.Argument("key", "string", "key"), new CommandDescriptor.Argument("value", "json", "value"))
                         .describedAs("Writes a setting into the user or workspace layer"),
                 ctx -> settings.set(
                         ctx.args().requiredString("key"),

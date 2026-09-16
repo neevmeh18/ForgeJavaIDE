@@ -59,14 +59,15 @@ export class TerminalView {
   }
 
   async refresh(): Promise<void> {
+    const generation = this.ctx.client.workspaceGeneration;
     if (!this.ctx.client.currentWorkspace) {
-      this.terminals = [];
-      this.renderTabs();
+      this.resetWorkspace();
       return;
     }
     try {
       this.terminals = await this.ctx.client.query<TerminalInfo[]>('terminal.list');
     } catch {
+      if (generation !== this.ctx.client.workspaceGeneration) return;
       this.terminals = [];
     }
     if (this.active && !this.terminals.some((terminal) => terminal.id === this.active)) {
@@ -76,6 +77,24 @@ export class TerminalView {
       await this.select(this.terminals[0].id);
     }
     this.renderTabs();
+  }
+
+  resetWorkspace(): void {
+    this.terminals = [];
+    this.active = null;
+    this.buffers.clear();
+    this.history.length = 0;
+    this.historyIndex = 0;
+    this.output.textContent = '';
+    this.input.value = '';
+    this.renderTabs();
+  }
+
+  applySettings(settings: Map<string, unknown>): void {
+    const size = Number(settings.get('terminal.fontSize') ?? 12);
+    const fontSize = Number.isFinite(size) ? Math.max(8, Math.min(32, size)) : 12;
+    this.output.style.fontSize = `${fontSize}px`;
+    this.input.style.fontSize = `${fontSize}px`;
   }
 
   async create(): Promise<void> {
@@ -123,6 +142,7 @@ export class TerminalView {
       this.input.value = '';
       if (line.trim()) {
         this.history.push(line);
+        if (this.history.length > 500) this.history.shift();
       }
       this.historyIndex = this.history.length;
       void this.send(`${line}\n`);
@@ -152,6 +172,7 @@ export class TerminalView {
   }
 
   private appendOutput(terminalId: string, data: string): void {
+    if (!this.buffers.has(terminalId) && this.buffers.size >= 64) this.buffers.delete(this.buffers.keys().next().value!);
     const existing = this.buffers.get(terminalId) ?? '';
     const combined = existing + data;
     this.buffers.set(terminalId, combined.length > 120_000 ? combined.slice(-120_000) : combined);

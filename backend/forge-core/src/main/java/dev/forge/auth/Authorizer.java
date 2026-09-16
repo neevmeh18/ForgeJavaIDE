@@ -23,9 +23,11 @@ import dev.forge.workspace.WorkspaceService;
 public final class Authorizer implements CommandExecutor.Authorizer, QueryRegistry.Authorizer {
 
     private final WorkspaceService workspaces;
+    private final SessionService sessions;
 
-    public Authorizer(WorkspaceService workspaces) {
+    public Authorizer(WorkspaceService workspaces, SessionService sessions) {
         this.workspaces = workspaces;
+        this.sessions = sessions;
     }
 
     @Override
@@ -39,6 +41,10 @@ public final class Authorizer implements CommandExecutor.Authorizer, QueryRegist
     }
 
     private void checkWorkspaceAccess(RequestContext ctx, boolean required) {
+        if (ctx.origin() != RequestContext.Origin.SYSTEM && ctx.sessionId() != null && sessions.find(ctx.sessionId()).isEmpty())
+            throw ForgeException.unauthorized("Session is no longer active");
+        if (ctx.workspaceId() != null && ctx.sessionId() == null && ctx.origin() != RequestContext.Origin.SYSTEM)
+            throw ForgeException.unauthorized("Workspace access requires a session");
         if (ctx.workspaceId() == null) {
             if (required) {
                 throw ForgeException.invalidArgument("No workspace selected");

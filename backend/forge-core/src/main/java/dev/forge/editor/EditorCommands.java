@@ -23,26 +23,35 @@ public final class EditorCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("editor.open", "Editor", "Open File")
+                CommandDescriptor.of("editor.open", "Editor", "Open File") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
                         .describedAs("Opens a document buffer for a workspace file")
                         .workspaceScoped(),
                 ctx -> editors.open(Resource.of(ctx.requireWorkspace(), ctx.args().requiredString("path")),
                         ctx.sessionId()));
 
         commands.register(
-                CommandDescriptor.of("editor.close", "Editor", "Close Editor").workspaceScoped(),
+                CommandDescriptor.of("editor.close", "Editor", "Close Editor") .withArguments(new CommandDescriptor.Argument("documentId", "string", "documentId")).workspaceScoped(),
                 ctx -> {
-                    editors.close(ctx.args().documentId("documentId"), ctx.sessionId());
+                    editors.close(ctx.args().documentId("documentId"), ctx.requireWorkspace(), ctx.sessionId());
                     return null;
                 });
 
         commands.register(
-                CommandDescriptor.of("editor.update", "Editor", "Update Document")
+                CommandDescriptor.of("editor.update", "Editor", "Update Document") .withArguments(new CommandDescriptor.Argument("documentId", "string", "documentId"), new CommandDescriptor.Argument("text", "string", "text"), new CommandDescriptor.Argument("version", "number", "version"))
                         .describedAs("Pushes the client's working copy into the shared buffer")
                         .workspaceScoped(),
-                ctx -> editors.update(ctx.args().documentId("documentId"),
-                        ctx.args().requiredString("text"),
-                        ctx.args().integer("version", 0)));
+                ctx -> editors.update(ctx.args().documentId("documentId"), ctx.requireWorkspace(),
+                        ctx.sessionId(), ctx.args().requiredString("text"),
+                        ctx.args().integer("version", -1)));
+
+
+        commands.register(
+                CommandDescriptor.of("editor.save", "Editor", "Save Document") .withArguments(new CommandDescriptor.Argument("documentId", "string", "documentId"), new CommandDescriptor.Argument("text", "string", "text"), new CommandDescriptor.Argument("version", "number", "version"))
+                        .describedAs("Saves the active versioned editor buffer")
+                        .workspaceScoped().asSensitive(),
+                ctx -> editors.save(ctx.args().documentId("documentId"), ctx.requireWorkspace(),
+                        ctx.sessionId(), ctx.args().requiredString("text"),
+                        ctx.args().integer("version", -1)));
 
         queries.register(
                 QueryDescriptor.of("editor.documents", "Documents open in this session").workspaceScoped(),
@@ -52,13 +61,15 @@ public final class EditorCommands {
                 QueryDescriptor.of("editor.document", "One open document's metadata and text").workspaceScoped(),
                 (ctx, args) -> {
                     DocumentId id = args.documentId("documentId");
-                    return new EditorService.OpenDocument(editors.document(id), editors.text(id));
+                    return new EditorService.OpenDocument(
+                            editors.document(id, ctx.requireWorkspace(), ctx.sessionId()),
+                            editors.text(id, ctx.requireWorkspace(), ctx.sessionId()));
                 });
 
         // Formatting is surfaced as an editor action but implemented by language tooling: the
         // editor calls the language service, never the other way round.
         commands.register(
-                CommandDescriptor.of("editor.format", "Editor", "Format Document")
+                CommandDescriptor.of("editor.format", "Editor", "Format Document") .withArguments(new CommandDescriptor.Argument("documentId", "string", "documentId"))
                         .describedAs("Returns the edits a language provider would apply")
                         .workspaceScoped()
                         .availableWhen(requiresOpenDocument()),
@@ -80,7 +91,7 @@ public final class EditorCommands {
                 return Optional.of("No active document");
             }
             try {
-                editors.document(DocumentId.of(id.get()));
+                editors.document(DocumentId.of(id.get()), ctx.requireWorkspace(), ctx.sessionId());
                 return Optional.empty();
             } catch (RuntimeException e) {
                 return Optional.of("Document is not open");

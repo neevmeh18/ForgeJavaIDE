@@ -20,6 +20,7 @@ export class Explorer {
   private readonly expanded = new Set<string>();
   private contextMenuItems: MenuItem[] = [];
   private selected: string | null = null;
+  private selectedIsDirectory = false;
 
   constructor(private readonly ctx: WorkbenchContext) {
     const actions = el(
@@ -39,6 +40,14 @@ export class Explorer {
       this.expanded.clear();
       void this.refresh();
     });
+  }
+
+  resetWorkspace(): void {
+    this.selected = null;
+    this.selectedIsDirectory = false;
+    this.expanded.clear();
+    clear(this.tree);
+    document.querySelector('.context-menu')?.remove();
   }
 
   setContextMenu(items: MenuItem[]): void {
@@ -95,6 +104,7 @@ export class Explorer {
 
     row.addEventListener('click', () => {
       this.selected = entry.path;
+      this.selectedIsDirectory = entry.directory;
       if (entry.directory) {
         if (this.expanded.has(entry.path)) {
           this.expanded.delete(entry.path);
@@ -109,6 +119,7 @@ export class Explorer {
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       this.selected = entry.path;
+      this.selectedIsDirectory = entry.directory;
       this.showContextMenu(event, entry);
     });
     return row;
@@ -183,9 +194,9 @@ export class Explorer {
     if (!this.selected) {
       return '';
     }
-    return this.expanded.has(this.selected)
-      ? this.selected
-      : this.selected.slice(0, Math.max(0, this.selected.lastIndexOf('/')));
+    if (this.selectedIsDirectory) return this.selected;
+    const slash = this.selected.lastIndexOf('/');
+    return slash < 0 ? '' : this.selected.slice(0, slash);
   }
 
   private action(label: string, handler: () => void): HTMLButtonElement {

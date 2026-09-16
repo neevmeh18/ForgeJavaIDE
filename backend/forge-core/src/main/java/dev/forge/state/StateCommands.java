@@ -28,7 +28,7 @@ public final class StateCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries) {
         commands.register(
-                CommandDescriptor.of("state.set", "State", "Set State Value").asSensitive(),
+                CommandDescriptor.of("state.set", "State", "Set State Value") .withArguments(new CommandDescriptor.Argument("scope", "string", "scope"), new CommandDescriptor.Argument("key", "string", "key"), new CommandDescriptor.Argument("value", "json", "value")).asSensitive(),
                 ctx -> {
                     StateStore.Scope scope = scope(ctx.args().requiredString("scope"));
                     store.put(scope, owner(scope, ctx.request()), key(ctx.args().requiredString("key")),

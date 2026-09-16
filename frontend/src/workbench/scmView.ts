@@ -33,6 +33,7 @@ export class ScmView {
       this.action('Pull', '⇣', () => void this.run('scm.pull')),
       this.action('Push', '⇡', () => void this.run('scm.push')),
       this.action('Switch branch', '⑂', () => void this.switchBranch()),
+      this.action('History', '◷', () => void this.showHistory()),
     );
 
     this.element.append(
@@ -44,6 +45,12 @@ export class ScmView {
     ctx.on('scm.repositoryChanged', () => void this.refresh());
     ctx.on('file.saved', () => void this.refresh());
     ctx.on('workspace.opened', () => void this.refresh());
+  }
+
+  resetWorkspace(): void {
+    this.message.value = '';
+    this.branchLabel.textContent = '';
+    clear(this.changes);
   }
 
   async refresh(): Promise<void> {
@@ -93,8 +100,39 @@ export class ScmView {
         open,
         toggle,
       );
+      const diff = el('button', { class: 'scm-action', title: 'Show diff', text: 'Diff' });
+      diff.addEventListener('click', () => {
+        void this.ctx.client.query<{ text: string }>('scm.diff', { path: change.path, staged: change.staged })
+          .then((result) => this.showText(change.path, result.text))
+          .catch((error: unknown) => this.ctx.notify('error', describe(error)));
+      });
+      row.append(diff);
+      if (!change.staged && change.status !== 'UNTRACKED') {
+        const discard = el('button', { class: 'scm-action', title: 'Discard changes', text: 'Discard' });
+        discard.addEventListener('click', () => {
+          if (window.confirm(`Discard changes to ${change.path}?`)) void this.run('scm.discard', { paths: [change.path] });
+        });
+        row.append(discard);
+      }
       this.changes.append(row);
     }
+  }
+
+  private showText(title: string, text: string): void {
+    const dialog = el('dialog', {});
+    const close = el('button', { text: 'Close' });
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.append(el('h3', { text: title }), el('pre', { text, style: 'max-height:70vh;max-width:85vw;overflow:auto' }), close);
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
+  private async showHistory(): Promise<void> {
+    try {
+      const commits = await this.ctx.client.query<Array<{ shortId: string; message: string }>>('scm.history', { limit: 50 });
+      this.showText('Recent commits', commits.map((commit) => `${commit.shortId} ${commit.message}`).join('\n'));
+    } catch (error) { this.ctx.notify('error', describe(error)); }
   }
 
   private async commit(): Promise<void> {
@@ -114,6 +152,7 @@ export class ScmView {
   }
 
   private async switchBranch(): Promise<void> {
+    const generation = this.ctx.client.workspaceGeneration;
     try {
       const branches = await this.ctx.client.query<Array<{ name: string; current: boolean; remote: boolean }>>(
         'scm.branches',
@@ -122,7 +161,7 @@ export class ScmView {
         `Branch to check out:\n${branches.map((branch) => branch.name).join('\n')}`,
         branches.find((branch) => branch.current)?.name ?? '',
       );
-      if (chosen) {
+      if (chosen && generation === this.ctx.client.workspaceGeneration) {
         await this.ctx.commands.execute('scm.checkout', { branch: chosen });
         await this.refresh();
       }

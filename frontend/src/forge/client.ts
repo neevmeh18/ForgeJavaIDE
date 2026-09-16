@@ -33,6 +33,8 @@ export function describeError(error: unknown): string {
 export class ForgeClient {
   private token: string | null = null;
   private workspaceId: string | null = null;
+  private generation = 0;
+  get workspaceGeneration(): number { return this.generation; }
   private listeners = new Set<EventListener>();
   private stream: AbortController | null = null;
   private reconnectDelay = 1000;
@@ -42,6 +44,7 @@ export class ForgeClient {
   }
 
   setWorkspace(workspaceId: string | null): void {
+    this.generation++;
     this.workspaceId = workspaceId;
   }
 
@@ -105,6 +108,7 @@ export class ForgeClient {
         throw new Error(`Event stream refused: ${response.status}`);
       }
       this.reconnectDelay = 1000;
+      this.listeners.forEach((listener) => listener({ type: 'forge.resync', workspaceId: null, payload: {} }));
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -150,17 +154,27 @@ export class ForgeClient {
   }
 
   private async call<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const generation = this.generation;
     const response = await this.post(path, body);
     const result = (await response.json()) as Result<T>;
     if (!result.ok) {
       throw this.toError(result);
     }
-    if (result.pending) {
-      throw new ForgeRequestError('UNAVAILABLE', 'The operation is still running', {
-        executionId: result.executionId ?? '',
-      });
-    }
+    if (generation !== this.generation) throw new ForgeRequestError('CANCELLED', 'Workspace changed');
+    if (result.pending && result.executionId) return this.waitForCommand<T>(result.executionId, generation);
     return result.value as T;
+  }
+
+  async waitForCommand<T>(executionId: string, generation = this.generation): Promise<T> {
+    const deadline = Date.now() + 6 * 60 * 1000;
+    while (Date.now() < deadline) {
+      if (generation !== this.generation) throw new ForgeRequestError('CANCELLED', 'Workspace changed');
+      const outcome = await this.query<Result<T>>('command.result', { executionId });
+      if (!outcome.ok) throw this.toError(outcome);
+      if (!outcome.pending) return outcome.value as T;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new ForgeRequestError('UNAVAILABLE', 'Command outcome not available; refresh state');
   }
 
   private async post(path: string, body: Record<string, unknown>): Promise<Response> {

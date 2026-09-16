@@ -39,6 +39,8 @@ public final class SearchService {
             ".gradle", ".idea", ".vscode", "__pycache__", ".venv", "vendor");
 
     private static final long MAX_SEARCHABLE_BYTES = 2L * 1024 * 1024;
+    private static final int MAX_REGEX_CHARS = 256;
+    private static final int MAX_LITERAL_QUERY_CHARS = 1024;
 
     public record FileMatch(String path, String name, int score) {
     }
@@ -59,14 +61,17 @@ public final class SearchService {
 
     private final FileSystem.Locator locator;
     private final SymbolSource symbols;
+    private final int maxVisitedEntries;
 
-    public SearchService(FileSystem.Locator locator, SymbolSource symbols) {
+    public SearchService(FileSystem.Locator locator, SymbolSource symbols, int maxVisitedEntries) {
         this.locator = locator;
         this.symbols = symbols == null ? SymbolSource.NONE : symbols;
+        this.maxVisitedEntries = maxVisitedEntries;
     }
 
     /** Filename search with subsequence matching, the behaviour a quick-open expects. */
     public List<FileMatch> findFiles(WorkspaceId workspace, String query, int limit, Cancellation.Token cancel) {
+        if (query.length() > MAX_LITERAL_QUERY_CHARS) throw dev.forge.core.ForgeException.invalidArgument("Search query is too long");
         String needle = query.toLowerCase(Locale.ROOT);
         List<FileMatch> matches = new ArrayList<>();
         walk(workspace, cancel, entry -> {
@@ -90,6 +95,7 @@ public final class SearchService {
     public TextSearchResult findText(WorkspaceId workspace, String query, boolean regex, boolean caseSensitive,
                                      int limit, Cancellation.Token cancel) {
         Pattern pattern = compile(query, regex, caseSensitive);
+        Budget budget = new Budget(cancel);
         FileSystem fs = locator.forWorkspace(workspace);
         List<TextMatch> matches = new ArrayList<>();
         int[] scanned = {0};
@@ -108,16 +114,21 @@ public final class SearchService {
                 String content = new String(bytes, StandardCharsets.UTF_8);
                 int line = 1;
                 for (String text : content.split("\n", -1)) {
-                    Matcher matcher = pattern.matcher(text);
-                    if (matcher.find()) {
+                    Matcher matcher = pattern.matcher(new BoundedText(text, budget));
+                    while (matcher.find()) {
                         matches.add(new TextMatch(entry.path(), line, matcher.start() + 1, preview(text)));
                         if (matches.size() >= limit) {
                             truncated[0] = true;
                             return false;
                         }
+                        // Java handles zero-length matches by advancing, but keep cancellation responsive.
+                        cancel.throwIfCancelled();
                     }
                     line++;
                 }
+            } catch (dev.forge.core.ForgeException e) {
+                if (e.code() == dev.forge.core.ForgeException.Code.CANCELLED || e.code() == dev.forge.core.ForgeException.Code.UNAVAILABLE) throw e;
+                log.with("path", entry.path()).debug("Skipped unreadable file during search");
             } catch (RuntimeException e) {
                 log.with("path", entry.path()).debug("Skipped unreadable file during search");
             }
@@ -136,8 +147,11 @@ public final class SearchService {
         FileSystem fs = locator.forWorkspace(workspace);
         Deque<String> queue = new ArrayDeque<>();
         queue.add(Resource.root(workspace).path());
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        int visited = 0;
         while (!queue.isEmpty()) {
             cancel.throwIfCancelled();
+            if (System.nanoTime() > deadline) throw dev.forge.core.ForgeException.unavailable("Search time budget exceeded");
             String directory = queue.poll();
             List<FileSystem.Entry> entries;
             try {
@@ -147,6 +161,9 @@ public final class SearchService {
             }
             for (FileSystem.Entry entry : entries) {
                 cancel.throwIfCancelled();
+                if (++visited > maxVisitedEntries) {
+                    throw dev.forge.core.ForgeException.unavailable("Search traversal limit exceeded");
+                }
                 if (entry.directory() && SKIPPED.contains(entry.name())) {
                     continue;
                 }
@@ -158,6 +175,25 @@ public final class SearchService {
                 }
             }
         }
+    }
+
+    /** Matcher accesses are metered, including backtracking, without changing regex semantics. */
+    private static final class Budget {
+        final Cancellation.Token cancel;
+        final long deadline = System.nanoTime() + 10_000_000_000L;
+        int accesses;
+        Budget(Cancellation.Token cancel) { this.cancel = cancel; }
+        void check() {
+            cancel.throwIfCancelled();
+            if (++accesses > 20_000_000 || System.nanoTime() > deadline)
+                throw dev.forge.core.ForgeException.unavailable("Search work budget exceeded");
+        }
+    }
+    private record BoundedText(String value, Budget budget) implements CharSequence {
+        public int length() { return value.length(); }
+        public char charAt(int index) { budget.check(); return value.charAt(index); }
+        public CharSequence subSequence(int start, int end) { return new BoundedText(value.substring(start, end), budget); }
+        public String toString() { return value; }
     }
 
     /** Subsequence score: consecutive and name-local matches rank above scattered path hits. */
@@ -189,9 +225,18 @@ public final class SearchService {
     }
 
     private static Pattern compile(String query, boolean regex, boolean caseSensitive) {
+        String value = query == null ? "" : query;
+        if (regex) {
+            if (value.length() > MAX_REGEX_CHARS) {
+                throw dev.forge.core.ForgeException.invalidArgument("Regex search pattern is too long");
+            }
+
+        } else if (value.length() > MAX_LITERAL_QUERY_CHARS) {
+            throw dev.forge.core.ForgeException.invalidArgument("Search query is too long");
+        }
         int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
         try {
-            return Pattern.compile(regex ? query : Pattern.quote(query), flags);
+            return Pattern.compile(regex ? value : Pattern.quote(value), flags);
         } catch (PatternSyntaxException e) {
             throw dev.forge.core.ForgeException.invalidArgument("Invalid search pattern: " + e.getDescription());
         }

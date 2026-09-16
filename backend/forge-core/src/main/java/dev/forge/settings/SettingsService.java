@@ -85,7 +85,7 @@ public final class SettingsService {
      * Writes a value into one layer. {@code DEFAULT} and {@code EXTENSION} are read-only —
      * they come from code and manifests, not from users.
      */
-    public Settings.Resolved set(String key, Object rawValue, Settings.Layer layer,
+    public synchronized Settings.Resolved set(String key, Object rawValue, Settings.Layer layer,
                                  UserId user, WorkspaceId workspace) {
         Settings.Definition definition = require(key);
         Object value = definition.coerce(rawValue);

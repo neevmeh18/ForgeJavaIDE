@@ -36,6 +36,8 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     private static final Duration LOCAL_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration NETWORK_TIMEOUT = Duration.ofMinutes(5);
     private static final Pattern BRANCH = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}");
+    private static final int MAX_PATHS = 256;
+    private static final int MAX_PATH_CHARS = 4096;
 
     /** ASCII unit separator: a field delimiter that cannot appear in a commit subject. */
     private static final String SEP = String.valueOf((char) 0x1f);
@@ -62,7 +64,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     @Override
     public RepositoryStatus status(WorkspaceId workspace) {
         Path directory = repository(workspace);
-        Processes.Result result = git(directory, LOCAL_TIMEOUT, "status", "--porcelain=v1", "-b");
+        Processes.Result result = git(directory, LOCAL_TIMEOUT, "status", "--porcelain=v1", "-b", "-z");
         if (!result.ok()) {
             return RepositoryStatus.NONE;
         }
@@ -72,7 +74,9 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         int behind = -1;
         boolean conflicted = false;
 
-        for (String line : result.output().split("\n")) {
+        String[] records = result.output().split("\\x00", -1);
+        for (int record = 0; record < records.length; record++) {
+            String line = records[record];
             if (line.isBlank()) {
                 continue;
             }
@@ -88,14 +92,12 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             }
             char index = line.charAt(0);
             char worktree = line.charAt(1);
-            String path = line.substring(3).trim();
+            String path = line.substring(3);
             String original = null;
-            if (path.contains(" -> ")) {
-                String[] parts = path.split(" -> ", 2);
-                original = unquote(parts[0]);
-                path = parts[1];
+            if (index == 'R' || index == 'C' || worktree == 'R' || worktree == 'C') {
+                if (++record >= records.length) throw ForgeException.unavailable("Incomplete Git status output");
+                original = records[record];
             }
-            path = unquote(path);
 
             boolean bothModified = index == 'U' || worktree == 'U'
                     || (index == 'A' && worktree == 'A') || (index == 'D' && worktree == 'D');
@@ -239,7 +241,13 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     }
 
     private static Processes.Result git(Path directory, Duration timeout, String... arguments) {
-        List<String> command = new ArrayList<>(List.of("git"));
+        List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs", "-c", "core.quotePath=false"));
+        command.addAll(List.of("-c", "core.hooksPath=/dev/null",
+                "-c", "core.pager=cat",
+                "-c", "pager.status=false",
+                "-c", "pager.diff=false",
+                "-c", "diff.external=",
+                "-c", "protocol.ext.allow=never"));
         command.addAll(List.of(arguments));
         return Processes.run(directory, timeout, command);
     }
@@ -251,12 +259,23 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     /** Refuses anything that could be read as an option rather than a path. */
     private static List<String> checkedPaths(List<String> paths) {
-        for (String path : paths) {
-            if (path.isBlank() || path.startsWith("-") || path.contains("..")) {
-                throw ForgeException.invalidArgument("Invalid path: " + path);
-            }
+        if (paths.size() > MAX_PATHS) {
+            throw ForgeException.invalidArgument("Too many paths in one source-control operation");
         }
-        return paths;
+        List<String> checked = new ArrayList<>(paths.size());
+        for (String raw : paths) {
+            if (raw == null || raw.isBlank() || raw.length() > MAX_PATH_CHARS || raw.indexOf('\0') >= 0) {
+                throw ForgeException.invalidArgument("Invalid source-control path");
+            }
+            String path = raw.replace('\\', '/');
+            if (path.startsWith("/") || path.startsWith("-") || path.equals("..")
+                    || path.startsWith("../") || path.endsWith("/..") || path.contains("/../")
+                    || (path.length() > 1 && path.charAt(1) == ':')) {
+                throw ForgeException.invalidArgument("Invalid source-control path");
+            }
+            checked.add(path);
+        }
+        return List.copyOf(checked);
     }
 
     private static ChangeStatus statusOf(char code) {
@@ -279,13 +298,6 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             digits.append(header.charAt(i));
         }
         return digits.isEmpty() ? -1 : Integer.parseInt(digits.toString());
-    }
-
-    private static String unquote(String path) {
-        String trimmed = path.trim();
-        return trimmed.length() > 1 && trimmed.startsWith("\"") && trimmed.endsWith("\"")
-                ? trimmed.substring(1, trimmed.length() - 1)
-                : trimmed;
     }
 
     private static Instant parseDate(String iso) {

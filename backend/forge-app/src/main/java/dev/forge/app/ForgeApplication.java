@@ -1,6 +1,7 @@
 package dev.forge.app;
 
 import dev.forge.auth.AuthCommands;
+import dev.forge.auth.AuthEvents;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.Authorizer;
 import dev.forge.auth.SessionService;
@@ -90,19 +91,23 @@ public final class ForgeApplication implements Lifecycle.Component {
         ContributionRegistry contributions = new ContributionRegistry();
 
         // ---- Infrastructure bound to capabilities -----------------------------------------
-        LocalWorkspaceProvider workspaceProvider = new LocalWorkspaceProvider(config.workspaceRoot());
-        StateStore stateStore = new FileStateStore(config.dataDir());
+        LocalWorkspaceProvider workspaceProvider = new LocalWorkspaceProvider(config.workspaceRoot(),
+                config.maxWorkspaceBytes(), config.maxDirectoryEntries(), config.maxTraversalEntries());
+        StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
+                config.maxStateDocumentBytes());
         AuthenticationProvider authentication =
                 new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
 
         // ---- Features ---------------------------------------------------------------------
-        WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider));
-        Authorizer authorizer = new Authorizer(workspaces);
-        QueryRegistry queries = new QueryRegistry(authorizer);
-        CommandExecutor executor = new CommandExecutor(commandRegistry, events, authorizer);
-
+        WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),
+                config.maxOpenWorkspaces());
         SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
-                config.sessionMaxLifetime());
+                config.sessionMaxLifetime(), config.maxSessions());
+        Authorizer authorizer = new Authorizer(workspaces, sessions);
+        QueryRegistry queries = new QueryRegistry(authorizer);
+        CommandExecutor executor = new CommandExecutor(commandRegistry, events, authorizer,
+                config.maxCommandsGlobal(), config.maxCommandsPerSession());
+
         FileService files = new FileService(workspaces, events, config.maxFileBytes());
         EditorService editors = new EditorService(files, events);
         SettingsService settings = new SettingsService(stateStore, events);
@@ -111,10 +116,11 @@ public final class ForgeApplication implements Lifecycle.Component {
         // editor, which keeps the package dependency one-way.
         LanguageService languages = new LanguageService(
                 (workspace, document) -> snapshotOf(editors, workspace, document), events);
-        SearchService search = new SearchService(workspaces, languages::workspaceSymbols);
+        SearchService search = new SearchService(workspaces, languages::workspaceSymbols,
+                config.maxTraversalEntries());
 
         TerminalService terminals = new TerminalService(
-                new ProcessTerminalProvider(config.workspaceRoot(), config.terminalsEnabled()),
+                new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
                 events, config.shell());
         TaskService tasks = new TaskService(List.of(new WorkspaceTaskProvider(workspaces)), terminals, events);
         SourceControlService scm =
@@ -134,7 +140,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         new SearchCommands(search).register(commandRegistry, contributions);
         new TerminalCommands(terminals).register(commandRegistry, queries, contributions);
         new TaskCommands(tasks).register(commandRegistry, queries, contributions);
-        new LanguageCommands(languages).register(commandRegistry, queries, contributions);
+        new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
         new ScmCommands(scm).register(commandRegistry, queries, contributions);
         new DebugCommands(debug).register(commandRegistry, queries, contributions);
         new WorkbenchQueries(commandRegistry, executor, contributions, extensions, languages,
@@ -162,6 +168,10 @@ public final class ForgeApplication implements Lifecycle.Component {
             workspaces.onClose(opened.workspaceId(), files.watch(opened.workspaceId()));
             extensions.activateFor(dev.forge.core.extension.ExtensionDescriptor.ON_WORKSPACE);
         });
+        events.subscribe(AuthEvents.SessionEnded.class, ended -> {
+            workspaces.releaseSession(ended.sessionId());
+            stateStore.clear(StateStore.Scope.SESSION, ended.sessionId().value());
+        });
 
         new JarExtensionLoader(config.extensionsDir())
                 .discoverInto(extensions, (extension, contributes) ->
@@ -170,18 +180,21 @@ public final class ForgeApplication implements Lifecycle.Component {
         // ---- Transport ---------------------------------------------------------------------
         Json json = new Json();
         EventStream stream = new EventStream(events, json,
-                (session, event) -> isVisible(workspaces, session, event));
-        Gateway gateway = new Gateway(executor, queries, sessions, Duration.ofSeconds(30));
+                (session, event) -> isVisible(workspaces, session, event),
+                config.maxEventClientsGlobal(), config.maxEventClientsPerSession());
+        Gateway gateway = new Gateway(executor, queries, sessions, Duration.ofSeconds(30),
+                config.queryTimeout());
         HttpTransport http = new HttpTransport(gateway, json, stream,
-                new StaticAssets(config.webRoot()), () -> ready, config.host(), config.port());
+                new StaticAssets(config.webRoot()), () -> ready, config.host(), config.port(),
+                config.requestBodyTimeout());
 
         this.started = List.of(executor, workspaces, sessions, editors, terminals, tasks, scm, debug,
-                languages, extensions, stream, http);
+                languages, extensions, gateway, stream, http);
     }
 
     @Override
     public void start() {
-        config.warnAboutDevelopmentDefaults();
+        config.validateSecurityDefaults();
         started.forEach(component -> {
             components.add(component);
             component.start();

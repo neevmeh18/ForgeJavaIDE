@@ -20,6 +20,7 @@ export class ExtensionsView {
       this.list,
     );
     ctx.on('extension.activated', () => void this.refresh());
+    ctx.on('extension.deactivated', () => void this.refresh());
     ctx.on('extension.failed', (event) => {
       const payload = event.payload as { extensionId: string; reason: string };
       ctx.notify('warning', `Extension ${payload.extensionId} failed: ${payload.reason}`);
@@ -54,7 +55,15 @@ export class ExtensionsView {
         el('div', { class: `extension-state state-${extension.state.toLowerCase()}`, text: extension.state }),
         extension.failure ? el('div', { class: 'extension-failure', text: extension.failure }) : null,
       );
-      if (extension.state === 'DISCOVERED' || extension.state === 'DEACTIVATED') {
+      if (extension.state === 'ACTIVATED') {
+        const deactivate = el('button', { class: 'view-action', text: 'Deactivate' });
+        deactivate.addEventListener('click', () => {
+          void this.ctx.commands.execute('extension.deactivate', { extensionId: extension.id }).then(() => this.refresh())
+            .catch((error: unknown) => this.ctx.notify('error', describe(error)));
+        });
+        row.append(deactivate);
+      }
+      if (extension.state === 'DISCOVERED' || extension.state === 'DEACTIVATED' || extension.state === 'FAILED') {
         const activate = el('button', { class: 'view-action', text: 'Activate' });
         activate.addEventListener('click', () => {
           void this.ctx.commands

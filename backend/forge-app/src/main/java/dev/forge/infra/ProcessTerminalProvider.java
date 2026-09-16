@@ -28,18 +28,18 @@ import java.util.function.IntConsumer;
  *
  * <p><b>Environment hygiene.</b> The child does not inherit the server's environment. It is
  * given a small, explicit set of variables, so the IDE's own configuration — including
- * {@code IDE_AUTH_PASSWORD} — cannot be read by anything the user runs in a terminal.
+ * {@code IDE_AUTH_PASSWORD} — is not passed to child processes. Same-UID processes are trusted code and are not a security sandbox.
  */
 public final class ProcessTerminalProvider implements TerminalProvider {
 
     private static final Log log = Log.of(ProcessTerminalProvider.class);
     private static final int READ_BUFFER = 8192;
 
-    private final Path workspaceRoot;
+    private final LocalWorkspaceProvider workspaces;
     private final boolean enabled;
 
-    public ProcessTerminalProvider(Path workspaceRoot, boolean enabled) {
-        this.workspaceRoot = workspaceRoot;
+    public ProcessTerminalProvider(LocalWorkspaceProvider workspaces, boolean enabled) {
+        this.workspaces = workspaces;
         this.enabled = enabled;
     }
 
@@ -74,32 +74,42 @@ public final class ProcessTerminalProvider implements TerminalProvider {
         try {
             process = builder.start();
         } catch (IOException e) {
-            throw ForgeException.unavailable("Could not start '" + spec.shell() + "': " + e.getMessage());
+            throw ForgeException.unavailable("Could not start terminal process");
         }
         log.with("terminalId", spec.id()).with("workspaceId", spec.workspace()).debug("Process started");
 
-        Thread.ofVirtual().name("forge-term-out").start(() -> pump(process.getInputStream(), onOutput));
-        process.onExit().thenAccept(exited -> onExit.accept(exited.exitValue()));
+        Thread output = Thread.ofVirtual().name("forge-term-out").start(() -> pump(process.getInputStream(), onOutput));
+        process.onExit().thenAccept(exited -> {
+            try { output.join(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            onExit.accept(exited.exitValue());
+        });
         return new ProcessSession(spec.id(), spec.workspace(), process);
     }
 
     /** The service already normalised the path; this maps it onto the real directory. */
     private Path resolveWorkingDirectory(Spec spec) {
-        Path base = workspaceRoot.toAbsolutePath().normalize();
+        Path base = workspaces.directory(spec.workspace())
+                .orElseThrow(() -> ForgeException.unavailable("Workspace is not open locally"));
         Path directory = base.resolve(spec.cwd()).normalize();
-        if (!directory.startsWith(base) || !directory.toFile().isDirectory()) {
-            return base;
+        SafePaths.noLinks(directory);
+        try {
+            Path real = directory.toRealPath();
+            if (!real.startsWith(base) || !java.nio.file.Files.isDirectory(real)) {
+                throw ForgeException.invalidArgument("Working directory is not a directory");
+            }
+            return real;
+        } catch (IOException e) {
+            throw ForgeException.invalidArgument("Working directory does not exist");
         }
-        return directory;
     }
 
     private static void pump(InputStream input, Consumer<String> onOutput) {
-        byte[] buffer = new byte[READ_BUFFER];
-        try (input) {
+        char[] buffer = new char[READ_BUFFER];
+        try (var reader = new java.io.InputStreamReader(input, StandardCharsets.UTF_8)) {
             int count;
-            while ((count = input.read(buffer)) >= 0) {
+            while ((count = reader.read(buffer)) >= 0) {
                 if (count > 0) {
-                    onOutput.accept(new String(buffer, 0, count, StandardCharsets.UTF_8));
+                    onOutput.accept(new String(buffer, 0, count));
                 }
             }
         } catch (IOException e) {
@@ -130,8 +140,8 @@ public final class ProcessTerminalProvider implements TerminalProvider {
 
         @Override
         public void kill() {
-            process.descendants().forEach(ProcessHandle::destroy);
-            process.destroy();
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
         }
 
         @Override

@@ -33,6 +33,7 @@ public final class JarExtensionLoader {
 
     private static final Log log = Log.of(JarExtensionLoader.class);
     private static final String MANIFEST = "forge-extension.json";
+    private static final long MAX_MANIFEST_BYTES = 256 * 1024;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final Path directory;
@@ -55,7 +56,12 @@ public final class JarExtensionLoader {
             return;
         }
         try (DirectoryStream<Path> jars = Files.newDirectoryStream(directory, "*.jar")) {
+            int count = 0;
             for (Path jar : jars) {
+                if (++count > 128) throw ForgeException.unavailable("Extension discovery limit exceeded");
+                if (Files.isSymbolicLink(jar) || !Files.isRegularFile(jar, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    continue;
+                }
                 try {
                     ExtensionDescriptor descriptor = readManifest(jar);
                     registry.discovered(descriptor, manifest -> instantiate(jar, manifest));
@@ -78,8 +84,13 @@ public final class JarExtensionLoader {
             if (entry == null) {
                 throw ForgeException.invalidArgument("No " + MANIFEST + " in the jar");
             }
+            if (entry.getSize() < 0 || entry.getSize() > MAX_MANIFEST_BYTES) {
+                throw ForgeException.invalidArgument("Extension manifest is too large");
+            }
             try (InputStream input = file.getInputStream(entry)) {
-                Map<String, Object> fields = mapper.readValue(input, Map.class);
+                byte[] bytes = input.readNBytes((int) MAX_MANIFEST_BYTES + 1);
+                if (bytes.length > MAX_MANIFEST_BYTES) throw ForgeException.invalidArgument("Extension manifest too large");
+                Map<String, Object> fields = mapper.readValue(bytes, Map.class);
                 List<String> activation = new ArrayList<>();
                 if (fields.get("activationEvents") instanceof List<?> declared) {
                     declared.forEach(event -> activation.add(String.valueOf(event)));
@@ -103,13 +114,60 @@ public final class JarExtensionLoader {
     private Extension instantiate(Path jar, ExtensionDescriptor descriptor) throws Exception {
         URLClassLoader loader = new URLClassLoader(descriptor.id().value(),
                 new URL[] {jar.toUri().toURL()}, getClass().getClassLoader());
+        try {
         Class<?> type = Class.forName(descriptor.mainClass(), true, loader);
         if (!Extension.class.isAssignableFrom(type)) {
             loader.close();
             throw ForgeException.invalidArgument(descriptor.mainClass() + " does not implement Extension");
         }
         log.with("extensionId", descriptor.id()).debug("Extension class loaded");
-        return (Extension) type.getDeclaredConstructor().newInstance();
+        Extension delegate = (Extension) type.getDeclaredConstructor().newInstance();
+        return new LoadedExtension(delegate, loader);
+        } catch (Exception | Error failure) {
+            loader.close();
+            throw failure;
+        }
+    }
+
+    /** Couples the extension instance to the class loader that owns it. */
+    private static final class LoadedExtension implements Extension {
+        private final Extension delegate;
+        private final URLClassLoader loader;
+        private boolean closed;
+
+        LoadedExtension(Extension delegate, URLClassLoader loader) {
+            this.delegate = delegate;
+            this.loader = loader;
+        }
+
+        @Override
+        public void activate(dev.forge.core.extension.ExtensionContext ctx) throws Exception {
+            try {
+                delegate.activate(ctx);
+            } catch (Exception | Error failure) {
+                close();
+                throw failure;
+            }
+        }
+
+        @Override
+        public void deactivate() {
+            try {
+                delegate.deactivate();
+            } finally {
+                close();
+            }
+        }
+
+        private void close() {
+            if (closed) return;
+            closed = true;
+            try {
+                loader.close();
+            } catch (IOException ignored) {
+                // Best effort during extension teardown.
+            }
+        }
     }
 
     private static String require(Map<String, Object> fields, String key) {

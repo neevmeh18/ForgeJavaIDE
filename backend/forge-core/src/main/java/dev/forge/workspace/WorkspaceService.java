@@ -45,9 +45,11 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
     private final Map<WorkspaceId, Open> open = new ConcurrentHashMap<>();
     private final Object openLock = new Object();
     private final EventBus events;
+    private final int maxOpenWorkspaces;
 
-    public WorkspaceService(EventBus events, List<WorkspaceProvider> providers) {
+    public WorkspaceService(EventBus events, List<WorkspaceProvider> providers, int maxOpenWorkspaces) {
         this.events = events;
+        this.maxOpenWorkspaces = maxOpenWorkspaces;
         for (WorkspaceProvider provider : providers) {
             this.providers.put(provider.scheme(), provider);
         }
@@ -100,23 +102,23 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
      * that impossible.
      */
     public Workspace open(WorkspaceId id, SessionId session) {
-        Open entry = open.get(id);
-        if (entry == null) {
-            // Resolving and opening a workspace is I/O; it does not belong inside a map's
-            // computeIfAbsent, where it would hold a bin lock for the duration.
-            synchronized (openLock) {
-                entry = open.get(id);
-                if (entry == null) {
-                    entry = new Open(openWith(id));
-                    open.put(id, entry);
-                    log.with("workspaceId", id).with("scheme", entry.workspace.location().scheme())
-                            .info("Workspace opened");
-                    events.publish(new WorkspaceEvents.WorkspaceOpened(id, entry.workspace.name()));
+        synchronized (openLock) {
+            Open entry = open.get(id);
+            if (entry == null) {
+                if (open.size() >= maxOpenWorkspaces) {
+                    throw ForgeException.unavailable("Too many workspaces are already open");
                 }
+                entry = new Open(openWith(id));
+                open.put(id, entry);
+                log.with("workspaceId", id).with("scheme", entry.workspace.location().scheme())
+                        .info("Workspace opened");
+                events.publish(new WorkspaceEvents.WorkspaceOpened(id, entry.workspace.name()));
             }
+            if (session != null && entry.sessions.add(session)) {
+                events.publish(new WorkspaceEvents.SessionAttached(id, session));
+            }
+            return entry.workspace;
         }
-        attach(id, session);
-        return entry.workspace;
     }
 
     private Workspace openWith(WorkspaceId id) {
@@ -131,17 +133,53 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
     }
 
     public void attach(WorkspaceId id, SessionId session) {
-        Open entry = require(id);
-        if (session != null && entry.sessions.add(session)) {
-            events.publish(new WorkspaceEvents.SessionAttached(id, session));
+        synchronized (openLock) {
+            Open entry = require(id);
+            if (session != null && entry.sessions.add(session)) {
+                events.publish(new WorkspaceEvents.SessionAttached(id, session));
+            }
         }
     }
 
     /** Detaches one session. The workspace stays open for whoever else is still attached. */
     public void detach(WorkspaceId id, SessionId session) {
-        Open entry = open.get(id);
-        if (entry != null && session != null && entry.sessions.remove(session)) {
-            events.publish(new WorkspaceEvents.SessionDetached(id, session));
+        synchronized (openLock) {
+            Open entry = open.get(id);
+            if (entry != null && session != null && entry.sessions.remove(session)) {
+                events.publish(new WorkspaceEvents.SessionDetached(id, session));
+            }
+        }
+    }
+
+    /** Atomically detaches a session and closes the workspace only if nobody remains attached. */
+    public void release(WorkspaceId id, SessionId session) {
+        synchronized (openLock) {
+            Open entry = open.get(id);
+            if (entry == null) {
+                return;
+            }
+            if (session != null && entry.sessions.remove(session)) {
+                events.publish(new WorkspaceEvents.SessionDetached(id, session));
+            }
+            if (entry.sessions.isEmpty()) {
+                closeLocked(id, entry);
+            }
+        }
+    }
+
+    /** Releases an expired/logged-out session from every workspace it was attached to. */
+    public void releaseSession(SessionId session) {
+        if (session == null) return;
+        synchronized (openLock) {
+            for (var item : List.copyOf(open.entrySet())) {
+                Open entry = item.getValue();
+                if (entry.sessions.remove(session)) {
+                    events.publish(new WorkspaceEvents.SessionDetached(item.getKey(), session));
+                }
+                if (entry.sessions.isEmpty()) {
+                    closeLocked(item.getKey(), entry);
+                }
+            }
         }
     }
 
@@ -154,10 +192,15 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
     }
 
     public void close(WorkspaceId id) {
-        Open entry = open.get(id);
-        if (entry == null) {
-            return;
+        synchronized (openLock) {
+            Open entry = open.get(id);
+            if (entry != null) {
+                closeLocked(id, entry);
+            }
         }
+    }
+
+    private void closeLocked(WorkspaceId id, Open entry) {
         entry.disposables.dispose();
         try {
             provider(entry.workspace.location().scheme()).close(id);
@@ -165,10 +208,8 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
             log.with("workspaceId", id).warn("Provider close failed", e);
         }
         log.with("workspaceId", id).info("Workspace closed");
-        // Published while the workspace is still registered, so the transport can still resolve
-        // which sessions were attached and deliver the news to exactly them.
         events.publish(new WorkspaceEvents.WorkspaceClosed(id));
-        open.remove(id);
+        open.remove(id, entry);
         entry.sessions.clear();
     }
 

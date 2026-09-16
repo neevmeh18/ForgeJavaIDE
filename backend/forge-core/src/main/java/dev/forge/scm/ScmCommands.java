@@ -22,7 +22,7 @@ public final class ScmCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("scm.stage", "Source Control", "Stage Changes")
+                CommandDescriptor.of("scm.stage", "Source Control", "Stage Changes") .withArguments(new CommandDescriptor.Argument("paths", "array", "paths"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.stage(ctx.requireWorkspace(), ctx.args().strings("paths"));
@@ -30,7 +30,7 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.unstage", "Source Control", "Unstage Changes")
+                CommandDescriptor.of("scm.unstage", "Source Control", "Unstage Changes") .withArguments(new CommandDescriptor.Argument("paths", "array", "paths"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.unstage(ctx.requireWorkspace(), ctx.args().strings("paths"));
@@ -38,7 +38,7 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.discard", "Source Control", "Discard Changes")
+                CommandDescriptor.of("scm.discard", "Source Control", "Discard Changes") .withArguments(new CommandDescriptor.Argument("paths", "array", "paths"))
                         .describedAs("Throws away working-tree changes; not undoable")
                         .workspaceScoped().asSensitive(),
                 ctx -> {
@@ -47,13 +47,13 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.commit", "Source Control", "Commit")
+                CommandDescriptor.of("scm.commit", "Source Control", "Commit") .withArguments(new CommandDescriptor.Argument("message", "string", "message"))
                         .workspaceScoped().asSensitive(),
                 ctx -> scm.commit(ctx.requireWorkspace(), ctx.args().requiredString("message"),
                         ctx.args().bool("amend", false)));
 
         commands.register(
-                CommandDescriptor.of("scm.checkout", "Source Control", "Checkout Branch")
+                CommandDescriptor.of("scm.checkout", "Source Control", "Checkout Branch") .withArguments(new CommandDescriptor.Argument("branch", "string", "branch"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.checkout(ctx.requireWorkspace(), ctx.args().requiredString("branch"),

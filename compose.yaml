@@ -1,12 +1,7 @@
-# Forge — local development stack.
+# Forge local development stack.
 #
-#   docker compose up --build      start (http://localhost:3000)
-#   docker compose down            stop
-#   docker compose logs -f         follow logs
-#
-# One service, because one service is all the framework needs. No database, cache or broker is
-# started: none is required, and requiring one would make the first run slower and more fragile
-# for no architectural gain.
+# Set a password before first start:
+#   IDE_AUTH_PASSWORD='choose-a-strong-password' docker compose up --build
 
 services:
   forge:
@@ -15,24 +10,28 @@ services:
       dockerfile: Dockerfile
     image: forge-ide:0.1.0
     container_name: forge
+    # Host-side loopback binding is deliberate. To expose Forge remotely, put an HTTPS reverse
+    # proxy in front of it and change this mapping explicitly.
     ports:
-      - "${IDE_PORT:-3000}:3000"
+      - "127.0.0.1:${IDE_PORT:-3000}:3000"
     environment:
-      # Change IDE_AUTH_PASSWORD before exposing this beyond localhost. Without it the backend
-      # falls back to a development default and says so, loudly, at startup.
+      IDE_HOST: "0.0.0.0"
       IDE_AUTH_USER: "${IDE_AUTH_USER:-developer}"
-      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:-forge}"
+      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:?Set IDE_AUTH_PASSWORD before starting Forge}"
       IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
+      IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"
+      IDE_MAX_STATE_MB: "${IDE_MAX_STATE_MB:-32}"
     volumes:
-      # Point IDE_WORKSPACE at any directory to work on it: IDE_WORKSPACE=~/code docker compose up
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
-      # Settings and persisted workbench state outlive the container; caches do not belong here.
       - forge-data:/data
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: ${IDE_PIDS_LIMIT:-512}
+    mem_limit: "${IDE_MEMORY_LIMIT:-4g}"
+    cpus: "${IDE_CPU_LIMIT:-4.0}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]

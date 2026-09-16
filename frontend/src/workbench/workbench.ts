@@ -58,6 +58,7 @@ export class Workbench implements WorkbenchContext {
   private readonly extensions: ExtensionsView;
   private readonly settings: SettingsView;
   private activeView = 'explorer';
+  private switching = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -137,6 +138,8 @@ export class Workbench implements WorkbenchContext {
     // An extension activated lazily contributes commands, menus and keybindings after startup,
     // so the workbench re-reads the registries rather than showing a stale catalogue.
     this.on('extension.activated', () => void this.reloadContributions());
+    this.on('extension.deactivated', () => void this.reloadContributions());
+    this.on('settings.changed', () => void this.applySettings());
     await this.applySettings();
     await this.openInitialWorkspace();
     this.showSidebarView('explorer');
@@ -179,6 +182,25 @@ export class Workbench implements WorkbenchContext {
   }
 
   private async openWorkspace(workspaceId: string): Promise<void> {
+    if (this.switching || this.state.workspace?.id === workspaceId) return;
+    this.switching = true;
+    try {
+    const previous = this.state.workspace;
+    if (previous) {
+      const proceed = await this.editors.prepareWorkspaceChange();
+      if (!proceed) return;
+      try {
+        await this.commands.execute('workspace.close', { workspaceId: previous.id });
+      } catch {
+        // The server may already have closed it; continue with a clean client state.
+      }
+      this.panel.resetWorkspace();
+      this.search.resetWorkspace();
+      this.explorer.resetWorkspace();
+      this.scm.resetWorkspace();
+      this.client.setWorkspace(null);
+      this.state.workspace = null;
+    }
     const workspace = (await this.commands.execute<Workspace>('workspace.open', { workspaceId })) as Workspace;
     this.state.workspace = workspace;
     this.client.setWorkspace(workspace.id);
@@ -186,6 +208,7 @@ export class Workbench implements WorkbenchContext {
     document.title = `${workspace.name} — Forge`;
     await Promise.all([this.explorer.refresh(), this.scm.refresh(), this.statusBar.refreshBranch()]);
     await this.applySettings();
+    } finally { this.switching = false; }
   }
 
   /** Reads resolved settings and applies the handful the workbench renders with. */
@@ -200,6 +223,8 @@ export class Workbench implements WorkbenchContext {
     this.state.theme = theme;
     document.documentElement.dataset.theme = theme;
     this.editors.setTheme(theme);
+    this.editors.applySettings(this.state.settings);
+    this.panel.applySettings(this.state.settings);
     const width = Number(this.state.settings.get('workbench.sidebarWidth') ?? 260);
     this.sidebar.style.width = `${Math.max(180, Math.min(600, width))}px`;
   }
@@ -245,11 +270,12 @@ export class Workbench implements WorkbenchContext {
       case 'debug':
         this.sidebar.append(this.debugView());
         break;
-      default:
+      case 'explorer':
         this.sidebar.append(this.explorer.element);
         void this.explorer.refresh();
         break;
     }
+    if (!this.sidebar.childElementCount) this.sidebar.append(el('p', { class: 'view-empty', text: 'This view has no supported renderer.' }));
     this.activityBar.setActive(viewId);
     this.editors.layout();
   }
@@ -293,6 +319,24 @@ export class Workbench implements WorkbenchContext {
    */
   private registerLocalCommands(): void {
     const local = this.commands;
+    local.registerInteractive('auth.logout', async () => {
+      await this.client.command('auth.logout');
+      this.client.setToken(null);
+      window.location.reload();
+    });
+    for (const id of ['file.save', 'editor.save']) local.registerInteractive(id, () => this.editors.saveActive());
+    local.registerInteractive('editor.close', () => this.editors.closeActive());
+    local.registerInteractive('editor.format', () => this.editors.formatActive());
+    local.registerInteractive('workspace.open', async () => { await local.execute('workbench.openWorkspace'); });
+    local.registerInteractive('terminal.create', async () => { await local.execute('workbench.newTerminal'); });
+    local.registerInteractive('language.rename', async () => { await local.execute('workbench.renameSymbol'); });
+    local.registerInteractive('debug.start', async () => { await local.execute('workbench.startDebug'); });
+    local.registerInteractive('search.text', () => this.showSidebarView('search'));
+    local.registerInteractive('settings.set', () => this.showSidebarView('settings'));
+    local.registerInteractive('workspace.close', async () => {
+      if (!await this.editors.prepareWorkspaceChange()) return;
+      await this.client.command('workspace.close');
+    });
 
     local.registerLocal('workbench.showView', 'Show View', 'View', (args) =>
       this.showSidebarView(String(args.viewId ?? 'explorer')),
@@ -341,6 +385,37 @@ export class Workbench implements WorkbenchContext {
         this.showSidebarView('explorer');
       }
     });
+    local.registerLocal('workbench.search', 'Find in Files', 'Search', () => this.showSidebarView('search'));
+    local.registerLocal('workbench.newTerminal', 'New Terminal', 'Terminal', async () => {
+      this.panel.show('terminal');
+      await this.panel.terminal.create();
+    });
+    local.registerLocal('workbench.runTask', 'Run Task…', 'Tasks', () => this.panel.show('tasks'));
+    local.registerLocal('workbench.renameSymbol', 'Rename Symbol', 'Language', async () => {
+      const documentId = this.editors.activeDocumentId();
+      const position = this.editors.activePosition();
+      if (!documentId || !position) return;
+      const newName = window.prompt('New symbol name', '');
+      if (!newName?.trim()) return;
+      const edit = await this.client.command<{ changes: unknown[] } | null>('language.rename', {
+        documentId, position, newName: newName.trim(),
+      });
+      if (!edit || edit.changes.length === 0) {
+        this.notify('info', 'No rename provider is registered for this language');
+      } else {
+        this.notify('warning', 'The language provider returned rename edits, but this milestone does not apply multi-file edits automatically.');
+      }
+    });
+    local.registerLocal('workbench.startDebug', 'Start Debugging', 'Debug', async () => {
+      const adapters = await this.client.query<string[]>('debug.adapters');
+      if (adapters.length === 0) {
+        this.showSidebarView('debug');
+        this.notify('info', 'No debug adapter is registered');
+        return;
+      }
+      const type = adapters.length === 1 ? adapters[0] : window.prompt(`Debug adapter (${adapters.join(', ')})`, adapters[0]);
+      if (type) await this.client.command('debug.start', { type });
+    });
     local.registerLocal('workbench.showLogs', 'Show Problems', 'View', () => this.panel.show('problems'));
     // Contributed menus may address a view directly; the settings menu item does.
     local.registerLocal('workbench.view.settings', 'Open Settings', 'View', () =>
@@ -349,11 +424,7 @@ export class Workbench implements WorkbenchContext {
 
     // Commands whose arguments only the UI knows. The ids stay canonical; the context is filled
     // in here rather than duplicated into a second "save the editor" command.
-    local.provideArguments('file.save', () => {
-      const path = this.editors.activePath();
-      return path ? { path } : null;
-    });
-    for (const id of ['editor.close', 'editor.format', 'language.rename']) {
+    for (const id of ['editor.close', 'editor.format']) {
       local.provideArguments(id, () => {
         const documentId = this.editors.activeDocumentId();
         return documentId ? { documentId } : null;
@@ -378,13 +449,24 @@ export class Workbench implements WorkbenchContext {
     this.keybindings.bind('ctrl+p', 'workbench.quickOpen');
     this.keybindings.bind('ctrl+j', 'workbench.togglePanel');
     this.keybindings.bind('ctrl+b', 'workbench.toggleSidebar');
-    this.keybindings.bind('ctrl+s', 'workbench.save');
-    this.keybindings.bind('ctrl+w', 'workbench.closeEditor');
-    this.keybindings.bind('ctrl+shift+i', 'workbench.formatDocument');
+    this.keybindings.bind('ctrl+s', 'workbench.save', 'editorFocus');
+    this.keybindings.bind('ctrl+w', 'workbench.closeEditor', 'editorFocus');
+    this.keybindings.bind('ctrl+shift+i', 'workbench.formatDocument', 'editorFocus');
+    this.keybindings.bind('ctrl+shift+f', 'workbench.search');
+    this.keybindings.bind('ctrl+`', 'workbench.newTerminal');
+    this.keybindings.bind('f2', 'workbench.renameSymbol', 'editorFocus');
+    this.keybindings.bind('f5', 'workbench.startDebug');
     this.keybindings.bind('ctrl+shift+e', 'workbench.showView');
   }
 
   private fanOut(event: ServerEvent): void {
+    if (event.workspaceId && event.workspaceId !== this.client.currentWorkspace) return;
+    if (event.type === 'forge.resync') {
+      void Promise.allSettled([this.explorer.refresh(), this.scm.refresh(), this.statusBar.refreshBranch()]);
+      void this.panel.terminal.refresh();
+      this.listeners.get(event.type)?.forEach((handler) => handler(event));
+      return;
+    }
     this.listeners.get(event.type)?.forEach((handler) => handler(event));
     if (event.type === 'file.saved') {
       this.notify('info', `Saved ${(event.payload as { path: string }).path}`);
@@ -401,6 +483,10 @@ export class Workbench implements WorkbenchContext {
       this.client.setWorkspace(null);
       this.state.workspace = null;
       this.statusBar.setWorkspace(null);
+      this.panel.resetWorkspace();
+      this.search.resetWorkspace();
+      this.explorer.resetWorkspace();
+      this.scm.resetWorkspace();
       document.title = 'Forge';
       void this.explorer.refresh();
     }

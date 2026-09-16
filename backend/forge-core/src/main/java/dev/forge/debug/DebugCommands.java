@@ -30,7 +30,7 @@ public final class DebugCommands {
                         : Optional.of("No active debug session");
 
         commands.register(
-                CommandDescriptor.of("debug.start", "Debug", "Start Debugging")
+                CommandDescriptor.of("debug.start", "Debug", "Start Debugging") .withArguments(new CommandDescriptor.Argument("type", "string", "type"))
                         .describedAs("Starts a debug session using a registered adapter")
                         .workspaceScoped().asSensitive(),
                 ctx -> debug.start(ctx.requireWorkspace(), new DebugConfiguration(
@@ -40,7 +40,7 @@ public final class DebugCommands {
                         ctx.args().nested("options").values())));
 
         commands.register(
-                CommandDescriptor.of("debug.stop", "Debug", "Stop Debugging")
+                CommandDescriptor.of("debug.stop", "Debug", "Stop Debugging") .withArguments(new CommandDescriptor.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().asSensitive().availableWhen(requiresSession),
                 ctx -> {
                     debug.stop(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace());
@@ -48,7 +48,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.continue", "Debug", "Continue")
+                CommandDescriptor.of("debug.continue", "Debug", "Continue") .withArguments(new CommandDescriptor.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
                     debug.resume(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace(),
@@ -57,7 +57,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.pause", "Debug", "Pause")
+                CommandDescriptor.of("debug.pause", "Debug", "Pause") .withArguments(new CommandDescriptor.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
                     debug.pause(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace(),
@@ -66,7 +66,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.step", "Debug", "Step")
+                CommandDescriptor.of("debug.step", "Debug", "Step") .withArguments(new CommandDescriptor.Argument("debugSessionId", "string", "debugSessionId"))
                         .describedAs("Steps over, into or out of the current statement")
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
@@ -76,7 +76,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.toggleBreakpoint", "Debug", "Toggle Breakpoint").workspaceScoped(),
+                CommandDescriptor.of("debug.toggleBreakpoint", "Debug", "Toggle Breakpoint") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("line", "number", "line")).workspaceScoped(),
                 ctx -> debug.toggleBreakpoint(ctx.requireWorkspace(), ctx.args().requiredString("path"),
                         ctx.args().integer("line", 1), ctx.args().string("condition").orElse(null)));
 
@@ -102,7 +102,7 @@ public final class DebugCommands {
                 QueryDescriptor.of("debug.adapters", "Debug adapter types available"),
                 (ctx, args) -> debug.adapterTypes());
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("f5", "debug.start", null));
+        contributions.addKeybinding(ContributionRegistry.Keybinding.of("f5", "workbench.startDebug", null));
         contributions.addView(ContributionRegistry.View.of("debug", "Run and Debug", "sidebar", "bug", 40));
     }
 }

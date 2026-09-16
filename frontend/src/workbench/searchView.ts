@@ -24,6 +24,7 @@ export class SearchView {
   private readonly results = el('div', { class: 'search-results' });
   private readonly summary = el('p', { class: 'search-summary' });
   private running: string | null = null;
+  private generation = 0;
 
   constructor(private readonly ctx: WorkbenchContext) {
     const options = el(
@@ -48,21 +49,16 @@ export class SearchView {
       }
     });
 
-    // A long search reports its result as an event; this is the async command path in use.
-    ctx.on('command.completed', (event) => {
-      const payload = event.payload as { executionId: string; commandId: string; result: unknown };
-      if (payload.executionId === this.running && payload.commandId === 'search.text') {
-        this.running = null;
-        this.render(payload.result as TextSearchResult);
-      }
-    });
-    ctx.on('command.failed', (event) => {
-      const payload = event.payload as { executionId: string; message: string };
-      if (payload.executionId === this.running) {
-        this.running = null;
-        this.summary.textContent = payload.message;
-      }
-    });
+  }
+
+  resetWorkspace(): void {
+    this.generation++;
+    const previous = this.running;
+    this.running = null;
+    if (previous) void this.ctx.client.command('command.cancel', { executionId: previous }).catch(() => undefined);
+    clear(this.results);
+    this.query.value = '';
+    this.summary.textContent = '';
   }
 
   focus(): void {
@@ -71,25 +67,31 @@ export class SearchView {
   }
 
   private async run(): Promise<void> {
+    const generation = ++this.generation;
+    const workspace = this.ctx.client.workspaceGeneration;
     const text = this.query.value;
-    if (!text) {
-      clear(this.results);
-      this.summary.textContent = '';
-      return;
-    }
-    this.summary.textContent = 'Searching…';
+    const previous = this.running;
+    this.running = null;
+    if (previous) await this.ctx.client.command('command.cancel', { executionId: previous }).catch(() => undefined);
+    if (generation !== this.generation || workspace !== this.ctx.client.workspaceGeneration) return;
     clear(this.results);
+    this.summary.textContent = text ? 'Searching…' : '';
+    if (!text) return;
     try {
-      // Started asynchronously so a slow search never blocks the request, and so pressing
-      // Escape can cancel it through command.cancel.
-      this.running = await this.ctx.client.commandAsync('search.text', {
-        query: text,
-        regex: this.regex.checked,
-        caseSensitive: this.caseSensitive.checked,
-        limit: 500,
+      const executionId = await this.ctx.client.commandAsync('search.text', {
+        query: text, regex: this.regex.checked, caseSensitive: this.caseSensitive.checked, limit: 500,
       });
+      if (generation !== this.generation || workspace !== this.ctx.client.workspaceGeneration) {
+        await this.ctx.client.command('command.cancel', { executionId }).catch(() => undefined);
+        return;
+      }
+      this.running = executionId;
+      const result = await this.ctx.client.waitForCommand<TextSearchResult>(executionId, workspace);
+      if (generation === this.generation) this.render(result);
     } catch (error) {
-      this.summary.textContent = describe(error);
+      if (generation === this.generation) this.summary.textContent = describe(error);
+    } finally {
+      if (generation === this.generation) this.running = null;
     }
   }
 

@@ -17,33 +17,27 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Terminal coordination: who may start one, where it runs, and what the workbench sees.
- *
- * <p>Process execution is the most privileged thing the IDE does, so the checks live here
- * rather than in a provider: the working directory is forced through {@link Resource}
- * normalisation so it cannot escape the workspace, the number of concurrent terminals is
- * capped, and environment additions are filtered to a safe key shape.
- *
- * <p>A short scrollback is retained per terminal so a reconnecting or newly joining client can
- * be shown recent output instead of an empty screen.
- */
+/** Bounded process/terminal lifecycle for one workspace. */
 public final class TerminalService implements Lifecycle.Component {
 
     private static final Log log = Log.of(TerminalService.class);
     private static final int MAX_TERMINALS_PER_WORKSPACE = 16;
     private static final int SCROLLBACK_CHARS = 64 * 1024;
     private static final int MAX_INPUT_CHARS = 8192;
+    private static final int MAX_EVENT_OUTPUT_CHARS_PER_SECOND = 256 * 1024;
+    private static final int MAX_RETAINED_EXITED_PER_WORKSPACE = 32;
 
-    /** What the workbench lists. The handle itself never leaves the backend. */
-    public record TerminalInfo(TerminalId id, WorkspaceId workspaceId, String title, String cwd, boolean alive) {
-    }
+    public record TerminalInfo(TerminalId id, WorkspaceId workspaceId, String title, String cwd, boolean alive) { }
 
     private static final class Entry {
         final TerminalSession session;
         final TerminalInfo info;
         final Deque<String> scrollback = new ArrayDeque<>();
-        final AtomicInteger scrollbackSize = new AtomicInteger();
+        int scrollbackSize;
+        long outputWindowStarted = System.nanoTime();
+        int outputWindowChars;
+        boolean throttleNoticeSent;
+        volatile long exitedAtNanos;
 
         Entry(TerminalSession session, TerminalInfo info) {
             this.session = session;
@@ -51,7 +45,12 @@ public final class TerminalService implements Lifecycle.Component {
         }
     }
 
+    private final java.util.Set<TerminalId> creating = ConcurrentHashMap.newKeySet();
     private final Map<TerminalId, Entry> terminals = new ConcurrentHashMap<>();
+    private final Map<TerminalId, Integer> pendingExits = new ConcurrentHashMap<>();
+    private final Map<TerminalId, String> pendingOutput = new ConcurrentHashMap<>();
+    private final Map<TerminalId, Integer> recentExitCodes = new ConcurrentHashMap<>();
+    private final Map<WorkspaceId, AtomicInteger> processCounts = new ConcurrentHashMap<>();
     private final TerminalProvider provider;
     private final EventBus events;
     private final String defaultShell;
@@ -65,7 +64,6 @@ public final class TerminalService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        // Terminals belong to their workspace: closing it must not leave processes running.
         subscriptions.add(events.subscribe(WorkspaceEvents.WorkspaceClosed.class,
                 event -> killAll(event.workspaceId())));
     }
@@ -73,61 +71,74 @@ public final class TerminalService implements Lifecycle.Component {
     @Override
     public void dispose() {
         subscriptions.dispose();
-        List.copyOf(terminals.keySet()).forEach(id -> kill(id));
+        List.copyOf(terminals.keySet()).forEach(this::kill);
+        processCounts.clear();
+        pendingExits.clear();
+        pendingOutput.clear();
+        recentExitCodes.clear();
+        terminals.clear();
     }
 
     public TerminalInfo create(WorkspaceId workspace, String requestedCwd, String title,
                                Map<String, Object> env, int columns, int rows) {
-        if (!provider.isAvailable()) {
-            throw ForgeException.unavailable("Terminals are not available in this deployment");
-        }
-        if (list(workspace).size() >= MAX_TERMINALS_PER_WORKSPACE) {
-            throw ForgeException.conflict("Too many terminals open in this workspace");
-        }
-        // Normalising through Resource is what guarantees the cwd stays inside the workspace.
-        String cwd = Resource.of(workspace, requestedCwd == null ? "" : requestedCwd).path();
-        TerminalId id = TerminalId.of(Ids.random("term"));
-        TerminalProvider.Spec spec = new TerminalProvider.Spec(workspace, id, defaultShell, List.of(),
-                cwd, safeEnv(env), columns, rows);
-
-        TerminalSession session = provider.create(spec,
-                data -> onOutput(id, workspace, data),
-                exitCode -> onExit(id, workspace, exitCode));
-
-        TerminalInfo info = new TerminalInfo(id, workspace,
-                title == null || title.isBlank() ? defaultShell : sanitizeTitle(title), cwd, true);
-        terminals.put(id, new Entry(session, info));
-        log.with("workspaceId", workspace).with("terminalId", id).info("Terminal created");
-        events.publish(new TerminalEvents.TerminalCreated(workspace, id, info.title()));
-        return info;
+        return start(workspace, defaultShell, List.of(), requestedCwd,
+                title == null || title.isBlank() ? defaultShell : title, safeEnv(env), columns, rows);
     }
 
-    /**
-     * Starts one specific program instead of an interactive shell. Used by the task feature,
-     * which needs a process it can observe — the terminal is only how its output is presented.
-     */
     public TerminalInfo run(WorkspaceId workspace, String executable, List<String> arguments,
                             String requestedCwd, String title, Map<String, String> env) {
+        if (executable == null || executable.isBlank() || executable.length() > 512) {
+            throw ForgeException.invalidArgument("Invalid executable");
+        }
+        if (arguments != null && arguments.size() > 256) {
+            throw ForgeException.invalidArgument("Too many process arguments");
+        }
+        return start(workspace, executable, arguments == null ? List.of() : List.copyOf(arguments),
+                requestedCwd, title, safeEnv(env == null ? Map.of() : env), 120, 30);
+    }
+
+    private synchronized TerminalInfo start(WorkspaceId workspace, String executable, List<String> arguments,
+                               String requestedCwd, String title, Map<String, String> env,
+                               int columns, int rows) {
         if (!provider.isAvailable()) {
             throw ForgeException.unavailable("Process execution is not available in this deployment");
         }
         String cwd = Resource.of(workspace, requestedCwd == null ? "" : requestedCwd).path();
         TerminalId id = TerminalId.of(Ids.random("term"));
         TerminalProvider.Spec spec = new TerminalProvider.Spec(workspace, id, executable, arguments,
-                cwd, safeEnv(env == null ? Map.<String, String>of() : env), 120, 30);
-
-        TerminalSession session = provider.create(spec,
-                data -> onOutput(id, workspace, data),
-                exitCode -> onExit(id, workspace, exitCode));
-
-        TerminalInfo info = new TerminalInfo(id, workspace, sanitizeTitle(title), cwd, true);
-        terminals.put(id, new Entry(session, info));
-        events.publish(new TerminalEvents.TerminalCreated(workspace, id, info.title()));
-        return info;
+                cwd, env, Math.clamp(columns, 20, 500), Math.clamp(rows, 5, 200));
+        reserve(workspace);
+        creating.add(id);
+        try {
+            TerminalSession session = provider.create(spec,
+                    data -> onOutput(id, workspace, data),
+                    exitCode -> onExit(id, workspace, exitCode));
+            TerminalInfo info = new TerminalInfo(id, workspace, sanitizeTitle(title), cwd, true);
+            terminals.put(id, new Entry(session, info));
+            creating.remove(id);
+            String earlyOutput = pendingOutput.remove(id);
+            if (earlyOutput != null && !earlyOutput.isEmpty()) {
+                onOutput(id, workspace, earlyOutput);
+            }
+            Integer earlyExit = pendingExits.remove(id);
+            if (earlyExit != null) {
+                onExit(id, workspace, earlyExit);
+            } else {
+                log.with("workspaceId", workspace).with("terminalId", id).info("Terminal created");
+                events.publish(new TerminalEvents.TerminalCreated(workspace, id, info.title()));
+            }
+            return info;
+        } catch (RuntimeException e) {
+            creating.remove(id);
+            pendingExits.remove(id);
+            pendingOutput.remove(id);
+            release(workspace);
+            throw e;
+        }
     }
 
     public void write(TerminalId id, WorkspaceId workspace, String data) {
-        if (data.length() > MAX_INPUT_CHARS) {
+        if (data == null || data.length() > MAX_INPUT_CHARS) {
             throw ForgeException.invalidArgument("Terminal input is too large");
         }
         require(id, workspace).session.write(data);
@@ -138,8 +149,7 @@ public final class TerminalService implements Lifecycle.Component {
     }
 
     public void kill(TerminalId id, WorkspaceId workspace) {
-        require(id, workspace);
-        kill(id);
+        require(id, workspace).session.kill();
     }
 
     public List<TerminalInfo> list(WorkspaceId workspace) {
@@ -151,32 +161,102 @@ public final class TerminalService implements Lifecycle.Component {
                 .toList();
     }
 
-    /** Recent output, for a client that just connected or reloaded. */
     public String scrollback(TerminalId id, WorkspaceId workspace) {
         Entry entry = require(id, workspace);
-        synchronized (entry.scrollback) {
+        synchronized (entry) {
             return String.join("", entry.scrollback);
         }
     }
 
-    private void onOutput(TerminalId id, WorkspaceId workspace, String data) {
-        Entry entry = terminals.get(id);
-        if (entry != null) {
-            synchronized (entry.scrollback) {
-                entry.scrollback.addLast(data);
-                entry.scrollbackSize.addAndGet(data.length());
-                while (entry.scrollbackSize.get() > SCROLLBACK_CHARS && entry.scrollback.size() > 1) {
-                    entry.scrollbackSize.addAndGet(-entry.scrollback.removeFirst().length());
-                }
-            }
-        }
-        events.publish(new TerminalEvents.TerminalOutput(workspace, id, data));
+    /** One-shot exit status used to close the fast-process race in the task layer. */
+    public java.util.OptionalInt consumeExitCode(TerminalId id) {
+        Integer code = recentExitCodes.remove(id);
+        return code == null ? java.util.OptionalInt.empty() : java.util.OptionalInt.of(code);
     }
 
-    private void onExit(TerminalId id, WorkspaceId workspace, int exitCode) {
-        terminals.remove(id);
+    private synchronized void onOutput(TerminalId id, WorkspaceId workspace, String data) {
+        Entry entry = terminals.get(id);
+        if (data == null || data.isEmpty()) return;
+        if (entry == null) {
+            if (!creating.contains(id)) return;
+            pendingOutput.merge(id,
+                    data.length() > SCROLLBACK_CHARS ? data.substring(data.length() - SCROLLBACK_CHARS) : data,
+                    (left, right) -> {
+                        String combined = left + right;
+                        return combined.length() > SCROLLBACK_CHARS
+                                ? combined.substring(combined.length() - SCROLLBACK_CHARS) : combined;
+                    });
+            return;
+        }
+        String eventData = null;
+        boolean notice = false;
+        synchronized (entry) {
+            String kept = data.length() > SCROLLBACK_CHARS
+                    ? data.substring(data.length() - SCROLLBACK_CHARS)
+                    : data;
+            entry.scrollback.addLast(kept);
+            entry.scrollbackSize += kept.length();
+            while (entry.scrollbackSize > SCROLLBACK_CHARS && entry.scrollback.size() > 1) {
+                entry.scrollbackSize -= entry.scrollback.removeFirst().length();
+            }
+
+            long now = System.nanoTime();
+            if (now - entry.outputWindowStarted >= 1_000_000_000L) {
+                entry.outputWindowStarted = now;
+                entry.outputWindowChars = 0;
+                entry.throttleNoticeSent = false;
+            }
+            int room = MAX_EVENT_OUTPUT_CHARS_PER_SECOND - entry.outputWindowChars;
+            if (room > 0) {
+                eventData = data.length() <= room ? data : data.substring(0, room);
+                entry.outputWindowChars += eventData.length();
+            }
+            if (eventData == null || eventData.length() < data.length()) {
+                notice = !entry.throttleNoticeSent;
+                entry.throttleNoticeSent = true;
+            }
+        }
+        if (eventData != null && !eventData.isEmpty()) {
+            events.publish(new TerminalEvents.TerminalOutput(workspace, id, eventData));
+        }
+        if (notice) {
+            events.publish(new TerminalEvents.TerminalOutput(workspace, id,
+                    "\n[Forge: terminal output throttled]\n"));
+        }
+    }
+
+    private synchronized void onExit(TerminalId id, WorkspaceId workspace, int exitCode) {
+        Entry entry = terminals.get(id);
+        if (entry == null) {
+            if (!creating.contains(id)) return;
+            pendingExits.putIfAbsent(id, exitCode);
+            return;
+        }
+        // Keep exited sessions around briefly so task output remains visible. They no longer
+        // consume a process slot and are pruned to a small bounded history per workspace.
+        if (entry.exitedAtNanos != 0) return;
+        if (entry.exitedAtNanos == 0) {
+            entry.exitedAtNanos = System.nanoTime();
+            release(workspace);
+        }
+        recentExitCodes.put(id, exitCode);
+        if (recentExitCodes.size() > 512) {
+            recentExitCodes.keySet().stream().limit(recentExitCodes.size() - 512).toList()
+                    .forEach(recentExitCodes::remove);
+        }
+        pruneExited(workspace);
         log.with("terminalId", id).with("exitCode", exitCode).debug("Terminal exited");
         events.publish(new TerminalEvents.TerminalExited(workspace, id, exitCode));
+    }
+
+    private void pruneExited(WorkspaceId workspace) {
+        List<Map.Entry<TerminalId, Entry>> exited = terminals.entrySet().stream()
+                .filter(item -> item.getValue().info.workspaceId().equals(workspace))
+                .filter(item -> item.getValue().exitedAtNanos != 0)
+                .sorted(Comparator.comparingLong((Map.Entry<TerminalId, Entry> item) -> item.getValue().exitedAtNanos).reversed())
+                .toList();
+        exited.stream().skip(MAX_RETAINED_EXITED_PER_WORKSPACE)
+                .forEach(item -> terminals.remove(item.getKey(), item.getValue()));
     }
 
     private void kill(TerminalId id) {
@@ -186,11 +266,16 @@ public final class TerminalService implements Lifecycle.Component {
         }
     }
 
-    private void killAll(WorkspaceId workspace) {
+    private synchronized void killAll(WorkspaceId workspace) {
         terminals.values().stream()
                 .filter(entry -> entry.info.workspaceId().equals(workspace))
                 .toList()
-                .forEach(entry -> entry.session.kill());
+                .forEach(entry -> {
+                    entry.session.kill();
+                    if (entry.exitedAtNanos == 0) release(workspace);
+                    terminals.remove(entry.info.id(), entry);
+                    recentExitCodes.remove(entry.info.id());
+                });
     }
 
     private Entry require(TerminalId id, WorkspaceId workspace) {
@@ -201,14 +286,31 @@ public final class TerminalService implements Lifecycle.Component {
         return entry;
     }
 
-    /**
-     * Only plain {@code NAME=value} pairs get through, and only as additions. A client cannot
-     * inject {@code LD_PRELOAD}-shaped names or smuggle control characters into the child's
-     * environment.
-     */
+    private synchronized void reserve(WorkspaceId workspace) {
+        if (processCounts.values().stream().mapToInt(AtomicInteger::get).sum() >= 64)
+            throw ForgeException.unavailable("Global process limit reached");
+        AtomicInteger count = processCounts.computeIfAbsent(workspace, ignored -> new AtomicInteger());
+        if (count.incrementAndGet() > MAX_TERMINALS_PER_WORKSPACE) {
+            if (count.decrementAndGet() == 0) {
+                processCounts.remove(workspace, count);
+            }
+            throw ForgeException.conflict("Too many terminal/task processes in this workspace");
+        }
+    }
+
+    private synchronized void release(WorkspaceId workspace) {
+        AtomicInteger count = processCounts.get(workspace);
+        if (count != null && count.decrementAndGet() <= 0) {
+            processCounts.remove(workspace, count);
+        }
+    }
+
     private static Map<String, String> safeEnv(Map<String, ?> requested) {
         if (requested == null || requested.isEmpty()) {
             return Map.of();
+        }
+        if (requested.size() > 64) {
+            throw ForgeException.invalidArgument("Too many environment variables");
         }
         Map<String, String> safe = new java.util.LinkedHashMap<>();
         requested.forEach((key, value) -> {
@@ -221,7 +323,8 @@ public final class TerminalService implements Lifecycle.Component {
     }
 
     private static String sanitizeTitle(String title) {
-        String cleaned = title.replaceAll("[\\p{Cntrl}]", "");
+        String value = title == null ? "process" : title;
+        String cleaned = value.replaceAll("[\\p{Cntrl}]", "");
         return cleaned.length() > 60 ? cleaned.substring(0, 60) : cleaned;
     }
 }

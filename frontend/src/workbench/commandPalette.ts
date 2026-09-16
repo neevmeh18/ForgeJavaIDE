@@ -171,7 +171,7 @@ export class CommandPalette {
     const wasCommand = this.input.value.startsWith('> ');
     this.close(null);
     if (wasCommand) {
-      void this.commands.execute(item.id);
+      void this.commands.execute(item.id).catch((error: unknown) => window.alert(error instanceof Error ? error.message : String(error)));
     } else {
       void this.commands.execute('workbench.openFile', { path: item.id });
     }
