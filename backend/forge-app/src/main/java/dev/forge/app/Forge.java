@@ -7,6 +7,7 @@ import java.util.logging.Formatter;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import org.apache.logging.log4j.LogManager;
 
 /**
  * Entry point.
@@ -24,6 +25,7 @@ public final class Forge {
     }
 
     public static void main(String[] args) {
+        LogManager.getLogger(Forge.class).debug("Starting Forge");
         Config config = Config.fromEnvironment();
         configureLogging(config.logLevel());
 
