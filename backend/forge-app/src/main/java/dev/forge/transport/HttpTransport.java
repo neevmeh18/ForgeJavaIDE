@@ -50,7 +50,6 @@ public final class HttpTransport implements Lifecycle.Component {
 
     private static final Log log = Log.of(HttpTransport.class);
 
-    // Log4j logger used for request metadata.
     private static final Logger requestLogger = LogManager.getLogger(HttpTransport.class);
 
     private static final long MAX_BODY_BYTES = 16L * 1024 * 1024;
@@ -186,10 +185,6 @@ public final class HttpTransport implements Lifecycle.Component {
         }
 
         try {
-            /*
-             * User-Agent comes directly from the incoming HTTP request.
-             * This gives the application a normal request-input -> logging path.
-             */
             String userAgent =
                     exchange.getRequestHeaders().getFirst("User-Agent");
 
