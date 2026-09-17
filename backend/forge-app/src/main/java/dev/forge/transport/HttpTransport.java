@@ -165,6 +165,8 @@ public final class HttpTransport implements Lifecycle.Component {
 
     private void handle(HttpExchange exchange, Route route) throws IOException {
         securityHeaders(exchange);
+        requestLogger.info("Request initiated:");
+
 
         if (!requestSlots.tryAcquire()) {
             writeJson(
@@ -185,13 +187,6 @@ public final class HttpTransport implements Lifecycle.Component {
         }
 
         try {
-            String userAgent =
-                    exchange.getRequestHeaders().getFirst("User-Agent");
-
-            if (userAgent != null) {
-                requestLogger.info("Request user-agent: {}", userAgent);
-            }
-
             route.handle(exchange);
 
         } catch (ForgeException e) {
