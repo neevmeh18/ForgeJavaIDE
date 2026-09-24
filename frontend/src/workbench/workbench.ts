@@ -16,6 +16,7 @@ import { ScmView } from './scmView';
 import { SearchView } from './searchView';
 import { ExtensionsView, SettingsView } from './sidePanels';
 import { StatusBar } from './statusBar';
+import { BackupView } from './backupView';
 
 /**
  * Assembles the workbench and owns the frontend's visual state.
@@ -57,6 +58,7 @@ export class Workbench implements WorkbenchContext {
   private readonly scm: ScmView;
   private readonly extensions: ExtensionsView;
   private readonly settings: SettingsView;
+  private readonly backups: BackupView;
   private activeView = 'explorer';
   private switching = false;
 
@@ -80,6 +82,7 @@ export class Workbench implements WorkbenchContext {
     this.scm = new ScmView(this);
     this.extensions = new ExtensionsView(this);
     this.settings = new SettingsView(this);
+    this.backups = new BackupView(this);
 
     client.onEvent((event) => this.fanOut(event));
     this.registerLocalCommands();
@@ -266,6 +269,10 @@ export class Workbench implements WorkbenchContext {
       case 'settings':
         this.sidebar.append(this.settings.element);
         void this.settings.refresh();
+        break;
+      case 'backups':
+        this.sidebar.append(this.backups.element);
+        void this.backups.refresh();
         break;
       case 'debug':
         this.sidebar.append(this.debugView());

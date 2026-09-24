@@ -118,6 +118,8 @@ public final class ForgeApplication implements Lifecycle.Component {
                 (workspace, document) -> snapshotOf(editors, workspace, document), events);
         SearchService search = new SearchService(workspaces, languages::workspaceSymbols,
                 config.maxTraversalEntries());
+        BackupService backups = new BackupService(workspaceProvider, stateStore, config.backupWorkerUrl(),
+                config.backupWorkerToken());
 
         TerminalService terminals = new TerminalService(
                 new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
@@ -138,6 +140,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         new SettingsCommands(settings).register(commandRegistry, queries, contributions);
         new StateCommands(stateStore).register(commandRegistry, queries);
         new SearchCommands(search).register(commandRegistry, contributions);
+        new BackupCommands(backups).register(commandRegistry, queries);
         new TerminalCommands(terminals).register(commandRegistry, queries, contributions);
         new TaskCommands(tasks).register(commandRegistry, queries, contributions);
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
@@ -308,6 +311,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         contributions.addView(ContributionRegistry.View.of("search", "Search", "sidebar", "search", 20));
         contributions.addView(ContributionRegistry.View.of("extensions", "Extensions", "sidebar",
                 "extensions", 50));
+        contributions.addView(ContributionRegistry.View.of("backups", "Backups", "sidebar", "archive", 60));
         contributions.addView(ContributionRegistry.View.of("terminal", "Terminal", "panel", "terminal", 10));
         contributions.addView(ContributionRegistry.View.of("problems", "Problems", "panel", "warning", 20));
         contributions.addView(ContributionRegistry.View.of("tasks", "Tasks", "panel", "checklist", 30));
