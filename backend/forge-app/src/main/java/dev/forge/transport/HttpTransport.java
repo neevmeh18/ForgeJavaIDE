@@ -16,6 +16,9 @@ import java.io.Writer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -75,6 +78,32 @@ public final class HttpTransport implements Lifecycle.Component {
     private final Duration requestBodyTimeout;
     private final Semaphore requestSlots = new Semaphore(MAX_CONCURRENT_REQUESTS);
     private final ConcurrentHashMap<String, LoginWindow> loginWindows = new ConcurrentHashMap<>();
+
+    /*
+     * Vulnerable-system testcase: authenticated users can read this shared error history.
+     * The terminal/workspace operations themselves remain session-scoped; only error-history
+     * authorization is intentionally missing. Combined with Gateway.ErrorView's verbose details,
+     * this demonstrates broken access control plus security-misconfiguration error leakage.
+     */
+    private record ErrorHistoryEntry(String time, String userId, String sessionId, String workspaceId,
+                                     String operation, Gateway.ErrorView error) { }
+    private final java.util.ArrayDeque<ErrorHistoryEntry> errorHistory = new java.util.ArrayDeque<>();
+
+    private synchronized void recordError(RequestContext ctx, String operation, Gateway.Result result) {
+        if (ctx == null || !ctx.isAuthenticated() || result == null || result.ok() || result.error() == null) return;
+        errorHistory.addFirst(new ErrorHistoryEntry(
+                Instant.now().toString(),
+                ctx.userId().value(),
+                ctx.sessionId().value(),
+                ctx.workspaceId() == null ? "" : ctx.workspaceId().value(),
+                operation,
+                result.error()));
+        while (errorHistory.size() > 100) errorHistory.removeLast();
+    }
+
+    private synchronized List<ErrorHistoryEntry> sharedErrorHistory() {
+        return List.copyOf(errorHistory);
+    }
     private final ScheduledExecutorService deadlines = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "forge-http-deadlines");
         thread.setDaemon(true);
@@ -115,6 +144,7 @@ public final class HttpTransport implements Lifecycle.Component {
         server.createContext("/api/command", exchange -> handle(exchange, this::command));
         server.createContext("/api/query", exchange -> handle(exchange, this::query));
         server.createContext("/api/events", exchange -> handle(exchange, this::events));
+        server.createContext("/api/terminal/errors", exchange -> handle(exchange, this::terminalErrors));
         server.createContext("/api/health", exchange -> handle(exchange, this::health));
         server.createContext("/", exchange -> handle(exchange, assets::serve));
         server.start();
@@ -176,6 +206,7 @@ public final class HttpTransport implements Lifecycle.Component {
         boolean async = Boolean.TRUE.equals(body.get("async"));
 
         Gateway.Result result = gateway.command(id, args, async, ctx);
+        recordError(ctx, id, result);
         writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)), result);
     }
 
@@ -186,8 +217,28 @@ public final class HttpTransport implements Lifecycle.Component {
         Cancellation cancellation = new Cancellation();
         RequestContext ctx = context(exchange, cancellation);
 
-        Gateway.Result result = gateway.query(requireString(body, "id"), Args.of(nested(body, "args")), ctx);
+        String id = requireString(body, "id");
+        Gateway.Result result = gateway.query(id, Args.of(nested(body, "args")), ctx);
+        recordError(ctx, id, result);
         writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)), result);
+    }
+
+    /**
+     * Shared terminal/API error history for the vulnerable-system exercise.
+     * Authentication is required, but ownership filtering is intentionally absent.
+     */
+    private void terminalErrors(HttpExchange exchange) throws IOException {
+        requirePath(exchange, "/api/terminal/errors");
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            throw ForgeException.invalidArgument("Expected GET");
+        }
+        RequestContext ctx = context(exchange, new Cancellation());
+        if (!ctx.isAuthenticated()) {
+            throw ForgeException.unauthorized("Authentication required");
+        }
+        Gateway.Result result = gateway.query("terminal.errors", Args.of(Map.of()), ctx);
+        writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)),
+                result.ok() ? Map.of("errors", result.value()) : result);
     }
 
     /**

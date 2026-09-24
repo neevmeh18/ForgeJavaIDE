@@ -4,6 +4,8 @@ import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
 import dev.forge.core.Ids.TerminalId;
 import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.Ids.UserId;
+import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.time.Instant;
 
 /** Bounded process/terminal lifecycle for one workspace. */
 public final class TerminalService implements Lifecycle.Component {
@@ -28,6 +31,11 @@ public final class TerminalService implements Lifecycle.Component {
     private static final int MAX_RETAINED_EXITED_PER_WORKSPACE = 32;
 
     public record TerminalInfo(TerminalId id, WorkspaceId workspaceId, String title, String cwd, boolean alive) { }
+
+    /** Intentionally shared for the vulnerable-system exercise. */
+    public record CommandFailure(String time, String userId, String sessionId, String workspaceId,
+                                 String operation, FailureView error) { }
+    public record FailureView(String code, String message, Map<String, String> details) { }
 
     private static final class Entry {
         final TerminalSession session;
@@ -55,6 +63,10 @@ public final class TerminalService implements Lifecycle.Component {
     private final EventBus events;
     private final String defaultShell;
     private final Lifecycle.Store subscriptions = new Lifecycle.Store();
+    private final Deque<CommandFailure> commandFailures = new ArrayDeque<>();
+    private final Map<TerminalId, PendingCommand> pendingCommands = new ConcurrentHashMap<>();
+
+    private record PendingCommand(UserId user, SessionId session, WorkspaceId workspace, String command) { }
 
     public TerminalService(TerminalProvider provider, EventBus events, String defaultShell) {
         this.provider = provider;
@@ -76,6 +88,7 @@ public final class TerminalService implements Lifecycle.Component {
         pendingExits.clear();
         pendingOutput.clear();
         recentExitCodes.clear();
+        pendingCommands.clear();
         terminals.clear();
     }
 
@@ -144,6 +157,33 @@ public final class TerminalService implements Lifecycle.Component {
         require(id, workspace).session.write(data);
     }
 
+    /**
+     * Remembers the command associated with the next terminal output. The command itself is still
+     * sent through terminal.write so interactive programs keep normal PTY behaviour.
+     */
+    public void noteCommand(TerminalId id, WorkspaceId workspace, UserId user, SessionId session, String command) {
+        require(id, workspace);
+        if (command == null || command.length() > MAX_INPUT_CHARS || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0) {
+            throw ForgeException.invalidArgument("Terminal command is invalid or too large");
+        }
+        pendingCommands.put(id, new PendingCommand(user, session, workspace, command));
+    }
+
+    private synchronized void recordCommandFailure(PendingCommand pending) {
+        // Deliberately retain only the submitted command. No environment, stack trace, cwd,
+        // shell output, password/input, or other diagnostics are stored.
+        Map<String, String> details = Map.of("command", pending.command());
+        commandFailures.addFirst(new CommandFailure(Instant.now().toString(), pending.user().value(),
+                pending.session().value(), pending.workspace().value(), "terminal.command",
+                new FailureView("TERMINAL_COMMAND_FAILED", "Terminal command failed", details)));
+        while (commandFailures.size() > 100) commandFailures.removeLast();
+    }
+
+    /** Intentionally missing owner/session filtering for the broken-access-control testcase. */
+    public synchronized List<CommandFailure> errors() {
+        return List.copyOf(commandFailures);
+    }
+
     public void resize(TerminalId id, WorkspaceId workspace, int columns, int rows) {
         require(id, workspace).session.resize(Math.clamp(columns, 20, 500), Math.clamp(rows, 5, 200));
     }
@@ -177,6 +217,10 @@ public final class TerminalService implements Lifecycle.Component {
     private synchronized void onOutput(TerminalId id, WorkspaceId workspace, String data) {
         Entry entry = terminals.get(id);
         if (data == null || data.isEmpty()) return;
+        PendingCommand pending = pendingCommands.get(id);
+        if (pending != null && looksLikeShellError(data)) {
+            if (pendingCommands.remove(id, pending)) recordCommandFailure(pending);
+        }
         if (entry == null) {
             if (!creating.contains(id)) return;
             pendingOutput.merge(id,
@@ -223,6 +267,17 @@ public final class TerminalService implements Lifecycle.Component {
             events.publish(new TerminalEvents.TerminalOutput(workspace, id,
                     "\n[Forge: terminal output throttled]\n"));
         }
+    }
+
+    private static boolean looksLikeShellError(String data) {
+        String value = data.toLowerCase(java.util.Locale.ROOT);
+        return value.contains("command not found")
+                || value.contains("permission denied")
+                || value.contains("authentication failure")
+                || value.contains("can't cd")
+                || value.contains("cannot cd")
+                || value.contains("no such file or directory")
+                || value.contains("not permitted");
     }
 
     private synchronized void onExit(TerminalId id, WorkspaceId workspace, int exitCode) {
