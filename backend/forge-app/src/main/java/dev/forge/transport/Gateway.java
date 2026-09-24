@@ -55,7 +55,7 @@ public final class Gateway implements Lifecycle.Component {
         }
     }
 
-    /** Client-facing failure shape. Internal diagnostics are not exposed to clients. */
+
     public record ErrorView(String code, String message, Map<String, String> details) {
         static ErrorView of(ForgeException failure) {
             String message = failure.code() == ForgeException.Code.INTERNAL_FAILURE

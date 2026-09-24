@@ -79,12 +79,6 @@ public final class HttpTransport implements Lifecycle.Component {
     private final Semaphore requestSlots = new Semaphore(MAX_CONCURRENT_REQUESTS);
     private final ConcurrentHashMap<String, LoginWindow> loginWindows = new ConcurrentHashMap<>();
 
-    /*
-     * Vulnerable-system testcase: authenticated users can read this shared error history.
-     * The terminal/workspace operations themselves remain session-scoped; only error-history
-     * authorization is intentionally missing. Combined with Gateway.ErrorView's verbose details,
-     * this demonstrates broken access control plus security-misconfiguration error leakage.
-     */
     private record ErrorHistoryEntry(String time, String userId, String sessionId, String workspaceId,
                                      String operation, Gateway.ErrorView error) { }
     private final java.util.ArrayDeque<ErrorHistoryEntry> errorHistory = new java.util.ArrayDeque<>();
@@ -222,11 +216,6 @@ public final class HttpTransport implements Lifecycle.Component {
         recordError(ctx, id, result);
         writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)), result);
     }
-
-    /**
-     * Shared terminal/API error history for the vulnerable-system exercise.
-     * Authentication is required, but ownership filtering is intentionally absent.
-     */
     private void terminalErrors(HttpExchange exchange) throws IOException {
         requirePath(exchange, "/api/terminal/errors");
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {

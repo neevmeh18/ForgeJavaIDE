@@ -867,7 +867,6 @@ button:focus-visible {
   color: var(--text-muted);
 }
 
-/* Terminal identity and session-local error viewer. */
 .terminal-identity {
   display: flex;
   justify-content: space-between;

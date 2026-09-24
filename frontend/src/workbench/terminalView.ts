@@ -23,7 +23,6 @@ interface SharedTerminalErrorEntry {
   error: { code: string; message: string; details: Record<string, string> };
 }
 
-/** Terminal UI. Errors are visible only in this signed-in browser session. */
 export class TerminalView {
   readonly element = el('div', { class: 'view terminal-view' });
   private readonly tabs = el('div', { class: 'terminal-tabs' });

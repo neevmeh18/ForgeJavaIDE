@@ -157,10 +157,6 @@ public final class TerminalService implements Lifecycle.Component {
         require(id, workspace).session.write(data);
     }
 
-    /**
-     * Remembers the command associated with the next terminal output. The command itself is still
-     * sent through terminal.write so interactive programs keep normal PTY behaviour.
-     */
     public void noteCommand(TerminalId id, WorkspaceId workspace, UserId user, SessionId session, String command) {
         require(id, workspace);
         if (command == null || command.length() > MAX_INPUT_CHARS || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0) {
@@ -170,8 +166,6 @@ public final class TerminalService implements Lifecycle.Component {
     }
 
     private synchronized void recordCommandFailure(PendingCommand pending) {
-        // Deliberately retain only the submitted command. No environment, stack trace, cwd,
-        // shell output, password/input, or other diagnostics are stored.
         Map<String, String> details = Map.of("command", pending.command());
         commandFailures.addFirst(new CommandFailure(Instant.now().toString(), pending.user().value(),
                 pending.session().value(), pending.workspace().value(), "terminal.command",
