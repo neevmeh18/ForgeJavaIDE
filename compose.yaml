@@ -1,7 +1,7 @@
 # Forge local development stack.
 #
 # Set a password before first start:
-#   IDE_AUTH_PASSWORD='choose-a-strong-password' docker compose up --build
+#   IDE_AUTH_PASSWORD_1='choose-a-strong-password-1' IDE_AUTH_PASSWORD_2='choose-a-strong-password-2' docker compose up --build
 
 services:
   forge:
@@ -16,8 +16,10 @@ services:
       - "127.0.0.1:${IDE_PORT:-3000}:3000"
     environment:
       IDE_HOST: "0.0.0.0"
-      IDE_AUTH_USER: "${IDE_AUTH_USER:-developer}"
-      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:?Set IDE_AUTH_PASSWORD before starting Forge}"
+      IDE_AUTH_USER_1: "${IDE_AUTH_USER_1:-developer1}"
+      IDE_AUTH_PASSWORD_1: "${IDE_AUTH_PASSWORD_1:?Set IDE_AUTH_PASSWORD_1 before starting Forge}"
+      IDE_AUTH_USER_2: "${IDE_AUTH_USER_2:-developer2}"
+      IDE_AUTH_PASSWORD_2: "${IDE_AUTH_PASSWORD_2:?Set IDE_AUTH_PASSWORD_2 before starting Forge}"
       IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
       IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"

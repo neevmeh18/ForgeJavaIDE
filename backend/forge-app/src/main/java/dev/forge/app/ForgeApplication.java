@@ -58,6 +58,7 @@ import dev.forge.workspace.WorkspaceEvents;
 import dev.forge.workspace.WorkspaceService;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -96,7 +97,9 @@ public final class ForgeApplication implements Lifecycle.Component {
         StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
                 config.maxStateDocumentBytes());
         AuthenticationProvider authentication =
-                new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
+                new PasswordAuthenticationProvider(Map.of(
+                        config.authUsername1(), config.authPassword1(),
+                        config.authUsername2(), config.authPassword2()));
 
         // ---- Features ---------------------------------------------------------------------
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),

@@ -43,6 +43,17 @@ public final class TerminalCommands {
                 });
 
         commands.register(
+                CommandDescriptor.of("terminal.noteCommand", "Terminal", "Track Terminal Command")
+                        .withArguments(new CommandDescriptor.Argument("terminalId", "string", "terminalId"),
+                                new CommandDescriptor.Argument("command", "string", "command"))
+                        .workspaceScoped().asSensitive(),
+                ctx -> {
+                    terminals.noteCommand(ctx.args().terminalId("terminalId"), ctx.requireWorkspace(),
+                            ctx.requireUser(), ctx.sessionId(), ctx.args().requiredString("command"));
+                    return null;
+                });
+
+        commands.register(
                 CommandDescriptor.of("terminal.resize", "Terminal", "Resize Terminal") .withArguments(new CommandDescriptor.Argument("terminalId", "string", "terminalId")).workspaceScoped(),
                 ctx -> {
                     terminals.resize(ctx.args().terminalId("terminalId"), ctx.requireWorkspace(),
@@ -65,6 +76,13 @@ public final class TerminalCommands {
         queries.register(
                 QueryDescriptor.of("terminal.scrollback", "Recent output for one terminal").workspaceScoped(),
                 (ctx, args) -> terminals.scrollback(args.terminalId("terminalId"), ctx.requireWorkspace()));
+
+        queries.register(
+                QueryDescriptor.of("terminal.errors", "Recent terminal command failures"),
+                (ctx, args) -> {
+                    ctx.requireUser();
+                    return terminals.errors();
+                });
 
         contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+`", "workbench.newTerminal", null));
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(

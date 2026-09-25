@@ -14,8 +14,10 @@ public record Config(
         Path webRoot,
         Path extensionsDir,
         String logLevel,
-        String authUsername,
-        String authPassword,
+        String authUsername1,
+        String authPassword1,
+        String authUsername2,
+        String authPassword2,
         String shell,
         boolean terminalsEnabled,
         Duration sessionIdleTimeout,
@@ -42,7 +44,8 @@ public record Config(
 
     public static Config fromEnvironment() {
         String host = env("IDE_HOST", "127.0.0.1");
-        String password = env("IDE_AUTH_PASSWORD", "");
+        String password1 = env("IDE_AUTH_PASSWORD_1", "");
+        String password2 = env("IDE_AUTH_PASSWORD_2", "");
         return new Config(
                 host,
                 boundedIntEnv("IDE_PORT", 3000, 1, 65535),
@@ -51,8 +54,10 @@ public record Config(
                 Path.of(env("IDE_WEB_ROOT", "/app/web")),
                 Path.of(env("IDE_EXTENSIONS_DIR", "/app/extensions")),
                 env("IDE_LOG_LEVEL", "INFO"),
-                env("IDE_AUTH_USER", "developer"),
-                password,
+                env("IDE_AUTH_USER_1", "developer1"),
+                password1,
+                env("IDE_AUTH_USER_2", "developer2"),
+                password2,
                 env("IDE_SHELL", "/bin/sh"),
                 !"false".equalsIgnoreCase(env("IDE_TERMINAL_ENABLED", "true")),
                 Duration.ofMinutes(boundedIntEnv("IDE_SESSION_IDLE_MINUTES", 120, 5, 1440)),
@@ -75,8 +80,19 @@ public record Config(
 
     /** Refuses the dangerous combination that previously made the development credential remote. */
     public void validateSecurityDefaults() {
-        if (authPassword == null || authPassword.length() < 12 || DEVELOPMENT_PASSWORD.equals(authPassword)) {
-            throw ForgeException.invalidArgument("Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
+        validateCredential("IDE_AUTH_PASSWORD_1", authPassword1);
+        validateCredential("IDE_AUTH_PASSWORD_2", authPassword2);
+        if (authUsername1.equals(authUsername2)) {
+            throw ForgeException.invalidArgument("IDE_AUTH_USER_1 and IDE_AUTH_USER_2 must be different users");
+        }
+        if (authPassword1.equals(authPassword2)) {
+            throw ForgeException.invalidArgument("Use different passwords for the two Forge users");
+        }
+    }
+
+    private static void validateCredential(String name, String password) {
+        if (password == null || password.length() < 12 || DEVELOPMENT_PASSWORD.equals(password)) {
+            throw ForgeException.invalidArgument("Set " + name + " to a unique password of at least 12 characters");
         }
     }
 

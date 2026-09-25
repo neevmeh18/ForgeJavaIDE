@@ -78,6 +78,21 @@ export class ForgeClient {
     return this.call<T>('/api/query', { id, args });
   }
 
+
+  /** Authenticated GET used by the terminal error-history view. */
+  async terminalErrors<T>(): Promise<T> {
+    const response = await fetch('/api/terminal/errors', { headers: this.headers(false) });
+    if (response.status === 401) {
+      this.token = null;
+      this.disconnectEvents();
+    }
+    if (!response.ok) {
+      const result = (await response.json()) as Result<unknown>;
+      throw this.toError(result);
+    }
+    return (await response.json()) as T;
+  }
+
   onEvent(listener: EventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

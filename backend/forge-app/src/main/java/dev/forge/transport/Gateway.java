@@ -55,13 +55,13 @@ public final class Gateway implements Lifecycle.Component {
         }
     }
 
-    /** The client-facing shape of a failure. Never contains a stack trace. */
+
     public record ErrorView(String code, String message, Map<String, String> details) {
         static ErrorView of(ForgeException failure) {
             String message = failure.code() == ForgeException.Code.INTERNAL_FAILURE
                     ? "An internal error occurred"
                     : failure.getMessage();
-            return new ErrorView(failure.code().name(), message, failure.details());
+            return new ErrorView(failure.code().name(), message, Map.copyOf(failure.details()));
         }
     }
 

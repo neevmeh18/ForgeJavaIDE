@@ -13,13 +13,10 @@ import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
 /**
- * The single-identity password provider.
+ * Password provider for the configured Forge application identities.
  *
- * <p>This is the "simple authentication initially" the framework asks for: one configured
- * account, no roles, no directory. It is still implemented properly — the configured password
- * is turned into a PBKDF2 hash at startup and the plaintext is wiped, verification is
- * constant-time, and a failure never says whether it was the username or the password that was
- * wrong.
+ * <p>Each configured password is converted to a PBKDF2 hash at startup. Authentication failures
+ * do not reveal whether the username or password was wrong.
  *
  * <p>Replacing it with OIDC, SSO or LDAP means writing another {@link AuthenticationProvider};
  * nothing else in the framework changes, because nothing else knows how identity is proved.
@@ -40,20 +37,30 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
         if (++attempts > 30) throw ForgeException.unavailable("Login temporarily rate limited");
     }
 
-    private final String username;
-    private final byte[] salt = new byte[16];
-    private final byte[] expectedHash;
+    private record Account(String username, byte[] salt, byte[] expectedHash) {}
 
+    private final java.util.List<Account> accounts;
+
+    /** Backward-compatible single-account constructor used by existing tests and embedders. */
     public PasswordAuthenticationProvider(String username, String password) {
-        this.username = username;
-        new SecureRandom().nextBytes(salt);
-        char[] secret = password.toCharArray();
-        try {
-            this.expectedHash = derive(secret);
-        } finally {
-            java.util.Arrays.fill(secret, '\0');
-        }
-        log.info("Password authentication configured");
+        this(Map.of(username, password));
+    }
+
+    public PasswordAuthenticationProvider(Map<String, String> configuredAccounts) {
+        java.util.List<Account> built = new java.util.ArrayList<>();
+        SecureRandom random = new SecureRandom();
+        configuredAccounts.forEach((username, password) -> {
+            byte[] salt = new byte[16];
+            random.nextBytes(salt);
+            char[] secret = password.toCharArray();
+            try {
+                built.add(new Account(username, salt, derive(secret, salt)));
+            } finally {
+                java.util.Arrays.fill(secret, '\0');
+            }
+        });
+        this.accounts = java.util.List.copyOf(built);
+        log.info("Password authentication configured for " + accounts.size() + " users");
     }
 
     @Override
@@ -63,24 +70,33 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
 
     @Override
     public Optional<User> authenticate(Credentials credentials) {
-        // Always derive, even for an unknown username: skipping the work would let an attacker
-        // distinguish "no such user" from "wrong password" by timing alone.
         admit();
         if (!checks.tryAcquire()) throw ForgeException.unavailable("Login busy; retry shortly");
-        byte[] candidate;
-        try { candidate = derive(credentials.secret()); } finally { checks.release(); }
-        boolean matches = MessageDigest.isEqual(expectedHash, candidate)
-                & username.equals(credentials.username());
-        java.util.Arrays.fill(candidate, (byte) 0);
-        if (!matches) {
-            log.info("Authentication rejected");
-            return Optional.empty();
+        try {
+            Account matched = null;
+            // Perform the expensive hash check for every configured account. This keeps unknown
+            // usernames from taking a noticeably cheaper path than known usernames.
+            for (Account account : accounts) {
+                byte[] candidate = derive(credentials.secret(), account.salt());
+                boolean passwordMatches = MessageDigest.isEqual(account.expectedHash(), candidate);
+                java.util.Arrays.fill(candidate, (byte) 0);
+                if (account.username().equals(credentials.username()) & passwordMatches) {
+                    matched = account;
+                }
+            }
+            if (matched == null) {
+                log.info("Authentication rejected");
+                return Optional.empty();
+            }
+            String username = matched.username();
+            return Optional.of(new User(dev.forge.core.Ids.UserId.of(username), username, id(),
+                    Map.of("provider", id())));
+        } finally {
+            checks.release();
         }
-        return Optional.of(new User(dev.forge.core.Ids.UserId.of(username), username, id(),
-                Map.of("provider", id())));
     }
 
-    private byte[] derive(char[] secret) {
+    private byte[] derive(char[] secret, byte[] salt) {
         try {
             PBEKeySpec spec = new PBEKeySpec(secret, salt, ITERATIONS, KEY_LENGTH_BITS);
             try {
@@ -96,6 +112,6 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
     /** Never log or serialise the configured credential; this guards against accidents. */
     @Override
     public String toString() {
-        return "PasswordAuthenticationProvider[username=" + username + "]";
+        return "PasswordAuthenticationProvider[users=" + accounts.size() + "]";
     }
 }
