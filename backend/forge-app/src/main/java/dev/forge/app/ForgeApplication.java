@@ -122,7 +122,8 @@ public final class ForgeApplication implements dev.forge.core.Component {
         MongoSavedSearchStore savedSearches = new MongoSavedSearchStore();
 
         TerminalService terminals = new TerminalService(
-                new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
+                new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled(),
+                        ProcessTerminalProvider.ExecutionTarget.REMOTE),
                 events, config.shell());
         TaskService tasks = new TaskService(List.of(new WorkspaceTaskProvider(workspaces)), terminals, events);
         SourceControlService scm =

@@ -107,10 +107,16 @@ public final class TaskService implements dev.forge.core.Component {
     }
 
     public void cancel(TaskExecutionId id, WorkspaceId workspace) {
-        Execution execution = require(id, workspace);
-        if (execution.state() == State.RUNNING) {
-            cancellationRequested.add(id);
-            terminals.kill(execution.terminalId(), workspace);
+        TerminalId terminalId = null;
+        synchronized (executions) {
+            Execution execution = require(id, workspace);
+            if (execution.state() == State.RUNNING) {
+                cancellationRequested.add(id);
+                terminalId = execution.terminalId();
+            }
+        }
+        if (terminalId != null) {
+            terminals.kill(terminalId, workspace);
         }
     }
 
@@ -128,24 +134,27 @@ public final class TaskService implements dev.forge.core.Component {
     }
 
     private void finishTerminal(TerminalId terminalId, int exitCode) {
-        TaskExecutionId id = byTerminal.remove(terminalId);
-        if (id == null) {
-
-
-
-            return;
+        Execution finished;
+        State state;
+        TaskExecutionId id;
+        synchronized (executions) {
+            id = byTerminal.remove(terminalId);
+            if (id == null) {
+                return;
+            }
+            terminals.consumeExitCode(terminalId);
+            Execution execution = executions.get(id);
+            if (execution == null || execution.state() != State.RUNNING) {
+                cancellationRequested.remove(id);
+                return;
+            }
+            boolean cancellation = cancellationRequested.remove(id)
+                    || exitCode == 130 || exitCode == 137 || exitCode == 143;
+            state = cancellation ? State.CANCELLED : exitCode == 0 ? State.SUCCEEDED : State.FAILED;
+            finished = execution.finished(state, exitCode);
+            executions.put(id, finished);
+            prune(finished.workspaceId());
         }
-        terminals.consumeExitCode(terminalId);
-        Execution execution = executions.get(id);
-        if (execution == null || execution.state() != State.RUNNING) {
-            return;
-        }
-        State state = cancellationRequested.remove(id)
-                ? State.CANCELLED
-                : exitCode == 0 ? State.SUCCEEDED : State.FAILED;
-        Execution finished = execution.finished(state, exitCode);
-        executions.put(id, finished);
-        prune(finished.workspaceId());
         log.with("taskId", finished.taskId()).with("state", state).info("Task finished");
         events.publish(new dev.forge.tasks.TaskFinished(finished.workspaceId(), id, finished.taskId(),
                 state.name(), exitCode));

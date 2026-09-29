@@ -1,6 +1,7 @@
 package dev.forge.infra;
 
 import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoException;
 import com.mongodb.MongoCredential;
 import com.mongodb.ServerAddress;
 import com.mongodb.client.model.IndexOptions;
@@ -74,42 +75,27 @@ public final class MongoSavedSearchStore implements SavedSearchStore {
         Document stored = searches.find(new Document("searchId", id)
                 .append("userId", userId.value())
                 .append("workspaceId", workspaceId.value())).first();
-        if (stored == null) throw ForgeException.invalidArgument("Saved search not found");
-
-        String storedQuery = stored.getString("query");
-        String selector = "{\"userId\":\"" + escapeJsonString(userId.value()) + "\",\"workspaceId\":\""
-                + escapeJsonString(workspaceId.value()) + "\",\"query\":{\"$regex\":\""
-                + escapeJsonString(storedQuery) + "\"}}";
-        Document resolved = searches.find(Document.parse(selector)).first();
-        if (resolved == null) throw ForgeException.invalidArgument("Saved search not found");
-
-        return new SavedSearch(id, resolved.getString("query"),
-                Boolean.TRUE.equals(resolved.getBoolean("regex")),
-                Boolean.TRUE.equals(resolved.getBoolean("caseSensitive")));
-    }
-
-    private String escapeJsonString(String value) {
-        StringBuilder escaped = new StringBuilder(value.length() + 16);
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\' -> escaped.append("\\\\");
-                case '"' -> escaped.append("\\\"");
-                case '\b' -> escaped.append("\\b");
-                case '\f' -> escaped.append("\\f");
-                case '\n' -> escaped.append("\\n");
-                case '\r' -> escaped.append("\\r");
-                case '\t' -> escaped.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        escaped.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        escaped.append(c);
-                    }
-                }
-            }
+        if (stored == null) {
+            throw ForgeException.invalidArgument("Saved search not found");
         }
-        return escaped.toString();
+        String storedQuery = stored.getString("query");
+        if (storedQuery == null) {
+            throw ForgeException.invalidArgument("Saved search is invalid");
+        }
+        Document selector = new Document("userId", userId.value())
+                .append("workspaceId", workspaceId.value())
+                .append("query", new Document("$regex", storedQuery));
+        try {
+            Document resolved = searches.find(selector).first();
+            if (resolved == null) {
+                throw ForgeException.invalidArgument("Saved search could not be resolved");
+            }
+            return new SavedSearch(id, resolved.getString("query"),
+                    Boolean.TRUE.equals(resolved.getBoolean("regex")),
+                    Boolean.TRUE.equals(resolved.getBoolean("caseSensitive")));
+        } catch (MongoException e) {
+            throw ForgeException.invalidArgument("Saved search text is invalid");
+        }
     }
 
     private String newId() {

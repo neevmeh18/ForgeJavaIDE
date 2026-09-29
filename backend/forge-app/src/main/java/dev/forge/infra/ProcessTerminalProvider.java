@@ -18,30 +18,30 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 public final class ProcessTerminalProvider implements TerminalProvider {
 
     private static final Log log = Log.of(ProcessTerminalProvider.class);
     private static final int READ_BUFFER = 8192;
+    private static final String TERMINAL_HOST = "forge-terminal";
+    private static final String TERMINAL_PORT = "2222";
+    private static final String TERMINAL_PASSWORD_FILE = "/run/forge-terminal-client-secret/password";
+
+    public enum ExecutionTarget {
+        LOCAL, REMOTE
+    }
 
     private final LocalWorkspaceProvider workspaces;
     private final boolean enabled;
+    private final ExecutionTarget target;
 
-    public ProcessTerminalProvider(LocalWorkspaceProvider workspaces, boolean enabled) {
-        this.workspaces = workspaces;
+    ProcessTerminalProvider(LocalWorkspaceProvider workspaces, boolean enabled) {
+        this(workspaces, enabled, ExecutionTarget.LOCAL);
+    }
+
+    public ProcessTerminalProvider(LocalWorkspaceProvider workspaces, boolean enabled, ExecutionTarget target) {
+        this.workspaces = java.util.Objects.requireNonNull(workspaces);
         this.enabled = enabled;
+        this.target = java.util.Objects.requireNonNull(target);
     }
 
     @Override
@@ -55,21 +55,9 @@ public final class ProcessTerminalProvider implements TerminalProvider {
             throw ForgeException.unavailable("Terminals are disabled in this deployment");
         }
         Path directory = resolveWorkingDirectory(spec);
-        List<String> command = new ArrayList<>();
-        command.add(spec.shell());
-        command.addAll(spec.arguments());
-
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(directory.toFile());
-        builder.redirectErrorStream(true);
-        Map<String, String> environment = builder.environment();
-        environment.clear();
-        environment.put("PATH", System.getenv().getOrDefault("PATH", "/usr/local/bin:/usr/bin:/bin"));
-        environment.put("HOME", System.getenv().getOrDefault("HOME", directory.toString()));
-        environment.put("TERM", "dumb");
-        environment.put("LANG", "C.UTF-8");
-        environment.put("PWD", directory.toString());
-        environment.putAll(spec.env());
+        ProcessBuilder builder = target == ExecutionTarget.REMOTE
+                ? remoteBuilder(directory, spec)
+                : localBuilder(directory, spec);
 
         Process process;
         try {
@@ -81,12 +69,69 @@ public final class ProcessTerminalProvider implements TerminalProvider {
 
         Thread output = Thread.ofVirtual().name("forge-term-out").start(() -> pump(process.getInputStream(), onOutput));
         process.onExit().thenAccept(exited -> {
-            try { output.join(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try {
+                output.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             onExit.accept(exited.exitValue());
         });
         return new ProcessSession(spec.id(), spec.workspace(), process);
     }
 
+
+    private static ProcessBuilder localBuilder(Path directory, Spec spec) {
+        List<String> command = new ArrayList<>();
+        command.add(spec.shell());
+        command.addAll(spec.arguments());
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(directory.toFile());
+        builder.redirectErrorStream(true);
+        Map<String, String> environment = builder.environment();
+        environment.clear();
+        environment.put("PATH", System.getenv().getOrDefault("PATH", "/usr/local/bin:/usr/bin:/bin"));
+        environment.put("HOME", "/tmp");
+        environment.put("TERM", "dumb");
+        environment.put("LANG", "C.UTF-8");
+        environment.putAll(spec.env());
+        return builder;
+    }
+
+    private static ProcessBuilder remoteBuilder(Path directory, Spec spec) {
+        List<String> command = new ArrayList<>();
+        command.add("sshpass");
+        command.add("-f");
+        command.add(TERMINAL_PASSWORD_FILE);
+        command.add("ssh");
+        command.add("-tt");
+        command.add("-e");
+        command.add("none");
+        command.add("-p");
+        command.add(TERMINAL_PORT);
+        command.add("-o");
+        command.add("StrictHostKeyChecking=no");
+        command.add("-o");
+        command.add("UserKnownHostsFile=/dev/null");
+        command.add("-o");
+        command.add("LogLevel=ERROR");
+        command.add("-o");
+        command.add("ClearAllForwardings=yes");
+        command.add("-o");
+        command.add("PermitLocalCommand=no");
+        command.add("-o");
+        command.add("RequestTTY=force");
+        command.add("forge@" + TERMINAL_HOST);
+        command.add(remoteCommand(directory, spec));
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.redirectErrorStream(true);
+        Map<String, String> environment = builder.environment();
+        environment.clear();
+        environment.put("PATH", System.getenv().getOrDefault("PATH", "/usr/local/bin:/usr/bin:/bin"));
+        environment.put("HOME", "/tmp");
+        environment.put("TERM", "dumb");
+        environment.put("LANG", "C.UTF-8");
+        return builder;
+    }
 
     private Path resolveWorkingDirectory(Spec spec) {
         Path base = workspaces.directory(spec.workspace())
@@ -104,6 +149,24 @@ public final class ProcessTerminalProvider implements TerminalProvider {
         }
     }
 
+    private static String remoteCommand(Path directory, Spec spec) {
+        StringBuilder command = new StringBuilder("cd -- ").append(shellQuote(directory.toString())).append(" && exec env");
+        command.append(" TERM=").append(shellQuote("dumb"));
+        command.append(" LANG=").append(shellQuote("C.UTF-8"));
+        for (Map.Entry<String, String> entry : spec.env().entrySet()) {
+            command.append(' ').append(shellQuote(entry.getKey() + "=" + entry.getValue()));
+        }
+        command.append(' ').append(shellQuote(spec.shell()));
+        for (String argument : spec.arguments()) {
+            command.append(' ').append(shellQuote(argument));
+        }
+        return command.toString();
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
+    }
+
     private static void pump(InputStream input, Consumer<String> onOutput) {
         char[] buffer = new char[READ_BUFFER];
         try (var reader = new java.io.InputStreamReader(input, StandardCharsets.UTF_8)) {
@@ -114,7 +177,6 @@ public final class ProcessTerminalProvider implements TerminalProvider {
                 }
             }
         } catch (IOException e) {
-
             log.debug("Terminal output stream closed");
         }
     }
@@ -135,8 +197,6 @@ public final class ProcessTerminalProvider implements TerminalProvider {
 
         @Override
         public void resize(int columns, int rows) {
-
-
         }
 
         @Override

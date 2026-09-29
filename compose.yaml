@@ -13,10 +13,17 @@ services:
         if [ ! -s /app-secrets/mongo-app-password ]; then
           head -c 32 /dev/urandom | base64 | tr -d '\n' > /app-secrets/mongo-app-password
         fi
-        chmod 0444 /root-secrets/mongo-root-password /app-secrets/mongo-app-password
+        if [ ! -s /terminal-client/password ]; then
+          head -c 32 /dev/urandom | base64 | tr -d '\n' > /terminal-client/password
+        fi
+        cp /terminal-client/password /terminal-server/password
+        chmod 0444 /root-secrets/mongo-root-password /app-secrets/mongo-app-password /terminal-client/password
+        chmod 0400 /terminal-server/password
     volumes:
       - forge-root-secret:/root-secrets
       - forge-app-secret:/app-secrets
+      - forge-terminal-client-secret:/terminal-client
+      - forge-terminal-server-secret:/terminal-server
 
   mongodb:
     image: mongo:8.0
@@ -55,6 +62,30 @@ services:
       - forge-root-secret:/run/forge-root-secret:ro
       - forge-app-secret:/run/forge-app-secret:ro
 
+  forge-terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile.terminal
+    image: forge-terminal:0.1.0
+    restart: unless-stopped
+    depends_on:
+      secret-init:
+        condition: service_completed_successfully
+    volumes:
+      - "${IDE_WORKSPACE:-./workspace}:/workspace"
+      - forge-terminal-server-secret:/run/forge-terminal-server-secret:ro
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${IDE_TERMINAL_PIDS_LIMIT:-256}
+    mem_limit: "${IDE_TERMINAL_MEMORY_LIMIT:-1g}"
+    cpus: "${IDE_TERMINAL_CPU_LIMIT:-2.0}"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/2222'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
   forge:
     build:
       context: .
@@ -64,6 +95,8 @@ services:
     depends_on:
       mongo-init:
         condition: service_completed_successfully
+      forge-terminal:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${IDE_PORT:-3000}:3000"
     environment:
@@ -78,6 +111,7 @@ services:
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
       - forge-data:/data
       - forge-app-secret:/run/forge-app-secret:ro
+      - forge-terminal-client-secret:/run/forge-terminal-client-secret:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -98,3 +132,5 @@ volumes:
   mongo-data:
   forge-root-secret:
   forge-app-secret:
+  forge-terminal-client-secret:
+  forge-terminal-server-secret:

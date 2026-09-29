@@ -62,7 +62,7 @@ public final class EditorService implements dev.forge.core.Component {
             for (Buffer buffer : affected(event.workspaceId(), "")) {
                 synchronized (buffer) {
                     buffer.viewers.remove(event.sessionId());
-                    if (buffer.viewers.isEmpty()) discard(buffer.document);
+                    if (buffer.viewers.isEmpty() && !buffer.document.dirty()) discard(buffer.document);
                 }
             }
         }));
@@ -194,7 +194,7 @@ public final class EditorService implements dev.forge.core.Component {
         }
         events.publish(new dev.forge.editor.EditorClosed(buffer.document.workspaceId(), session, id,
                 buffer.document.path(), buffer.document.languageId()));
-        if (buffer.viewers.isEmpty()) {
+        if (buffer.viewers.isEmpty() && !buffer.document.dirty()) {
             discard(buffer.document);
         }
         }

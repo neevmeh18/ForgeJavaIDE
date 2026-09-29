@@ -11,3 +11,7 @@ workspace/*
 !workspace/.gitkeep
 
 local_analysis/
+
+.mcp.json
+.reforge/
+reforge-0.1.0-py3-none-any.whl

@@ -1,0 +1,16 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-server bash ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 forge \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash forge \
+    && mkdir -p /run/sshd /workspace \
+    && chown -R forge:forge /workspace \
+    && ssh-keygen -A
+
+COPY terminal-entrypoint.sh /usr/local/bin/terminal-entrypoint
+RUN chmod 0755 /usr/local/bin/terminal-entrypoint
+
+EXPOSE 2222
+ENTRYPOINT ["/usr/local/bin/terminal-entrypoint"]

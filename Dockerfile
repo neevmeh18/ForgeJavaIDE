@@ -24,7 +24,7 @@ RUN mvn -B -q package
 FROM maven:3.9-eclipse-temurin-${JAVA_VERSION} AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl ca-certificates nodejs npm \
+    && apt-get install -y --no-install-recommends git curl ca-certificates nodejs npm openssh-client sshpass \
     && rm -rf /var/lib/apt/lists/*
 
 RUN userdel --remove ubuntu 2>/dev/null || true; \

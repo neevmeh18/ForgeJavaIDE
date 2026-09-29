@@ -204,20 +204,22 @@ public final class HttpTransport implements dev.forge.core.Component {
             throw ForgeException.unauthorized("Authentication required");
         }
         EventStream.Client client = stream.open(ctx.sessionId());
-        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-transform");
-        exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
-        exchange.sendResponseHeaders(200, 0);
-        try (Writer writer = new OutputStreamWriter(exchange.getResponseBody(), StandardCharsets.UTF_8)) {
-            writer.write(": connected\n\n");
-            writer.flush();
-            while (!Thread.currentThread().isInterrupted()) {
-                String frame = client.poll(HEARTBEAT);
-                ScheduledFuture<?> writeDeadline = deadlines.schedule(exchange::close, 15, TimeUnit.SECONDS);
-                try {
-                    writer.write(frame == null ? ": ping\n\n" : frame);
-                    writer.flush();
-                } finally { writeDeadline.cancel(false); }
+        try {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-transform");
+            exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0);
+            try (Writer writer = new OutputStreamWriter(exchange.getResponseBody(), StandardCharsets.UTF_8)) {
+                writer.write(": connected\n\n");
+                writer.flush();
+                while (!Thread.currentThread().isInterrupted()) {
+                    String frame = client.poll(HEARTBEAT);
+                    ScheduledFuture<?> writeDeadline = deadlines.schedule(exchange::close, 15, TimeUnit.SECONDS);
+                    try {
+                        writer.write(frame == null ? ": ping\n\n" : frame);
+                        writer.flush();
+                    } finally { writeDeadline.cancel(false); }
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
