@@ -37,6 +37,7 @@ final class Processes {
         environment.put("PATH", System.getenv().getOrDefault("PATH", "/usr/local/bin:/usr/bin:/bin"));
         environment.put("HOME", directory.toString());
         environment.put("GIT_CONFIG_NOSYSTEM", "1");
+        environment.put("GIT_CONFIG_GLOBAL", "/dev/null");
         environment.put("LANG", "C.UTF-8");
         environment.put("GIT_TERMINAL_PROMPT", "0");
         environment.put("GIT_ASKPASS", "");

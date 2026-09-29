@@ -123,7 +123,10 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     @Override
     public void stage(WorkspaceId workspace, List<String> paths) {
-        run(workspace, "Stage", List.of("add", "--"), paths);
+        List<String> checked = checkedPaths(paths);
+        Path directory = repository(workspace);
+        rejectActiveFilters(directory, checked);
+        run(directory, "Stage", List.of("add", "--"), checked);
     }
 
     @Override
@@ -232,17 +235,43 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     }
 
     private void run(WorkspaceId workspace, String what, List<String> verb, List<String> paths) {
+        run(repository(workspace), what, verb, checkedPaths(paths));
+    }
+
+    private void run(Path directory, String what, List<String> verb, List<String> paths) {
         if (paths.isEmpty()) {
             throw ForgeException.invalidArgument("No paths given to " + what.toLowerCase(java.util.Locale.ROOT));
         }
         List<String> command = new ArrayList<>(verb);
-        command.addAll(checkedPaths(paths));
-        git(repository(workspace), LOCAL_TIMEOUT, command.toArray(String[]::new)).orThrow(what);
+        command.addAll(paths);
+        git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new)).orThrow(what);
+    }
+
+    private static void rejectActiveFilters(Path directory, List<String> paths) {
+        if (paths.isEmpty()) {
+            throw ForgeException.invalidArgument("No paths given to stage");
+        }
+        List<String> command = new ArrayList<>(List.of("check-attr", "-z", "filter", "--"));
+        command.addAll(paths);
+        dev.forge.infra.Result result = git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new));
+        if (!result.ok()) {
+            throw ForgeException.unavailable("Could not verify Git attributes before staging");
+        }
+
+        String[] records = result.output().split("\\x00", -1);
+        for (int i = 0; i + 2 < records.length; i += 3) {
+            String value = records[i + 2];
+            if (!value.equals("unspecified") && !value.equals("unset")) {
+                throw ForgeException.invalidArgument(
+                        "Staging files with Git clean/process filters is not supported");
+            }
+        }
     }
 
     private static dev.forge.infra.Result git(Path directory, Duration timeout, String... arguments) {
         List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs", "-c", "core.quotePath=false"));
         command.addAll(List.of("-c", "core.hooksPath=/dev/null",
+                "-c", "core.fsmonitor=false",
                 "-c", "core.pager=cat",
                 "-c", "pager.status=false",
                 "-c", "pager.diff=false",
