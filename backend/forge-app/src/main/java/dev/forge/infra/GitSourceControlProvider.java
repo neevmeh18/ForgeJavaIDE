@@ -1,14 +1,14 @@
 package dev.forge.infra;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
-import dev.forge.scm.ScmTypes.Branch;
-import dev.forge.scm.ScmTypes.Change;
-import dev.forge.scm.ScmTypes.ChangeStatus;
-import dev.forge.scm.ScmTypes.Commit;
-import dev.forge.scm.ScmTypes.Diff;
-import dev.forge.scm.ScmTypes.RepositoryStatus;
+import dev.forge.scm.Branch;
+import dev.forge.scm.Change;
+import dev.forge.scm.ChangeStatus;
+import dev.forge.scm.Commit;
+import dev.forge.scm.Diff;
+import dev.forge.scm.RepositoryStatus;
 import dev.forge.scm.SourceControlProvider;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,26 +18,28 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
-/**
- * Source control through the {@code git} command-line tool.
- *
- * <p>Shelling out rather than embedding a Git library is a deliberate dependency choice: the
- * binary is already present wherever developers work, it is the reference implementation, and
- * it keeps a large library out of the runtime image. Everything Git-specific — porcelain
- * parsing, refspec handling, argument shapes — stays inside this class, and the rest of the IDE
- * sees only {@code ScmTypes}.
- *
- * <p>Untrusted strings (paths, branch names, messages) are passed as separate argv entries after
- * {@code --}, and branch names are validated, so nothing a user types can become a Git option.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 public final class GitSourceControlProvider implements SourceControlProvider {
 
     private static final Log log = Log.of(GitSourceControlProvider.class);
     private static final Duration LOCAL_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration NETWORK_TIMEOUT = Duration.ofMinutes(5);
     private static final Pattern BRANCH = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}");
+    private static final int MAX_PATHS = 256;
+    private static final int MAX_PATH_CHARS = 4096;
 
-    /** ASCII unit separator: a field delimiter that cannot appear in a commit subject. */
+
     private static final String SEP = String.valueOf((char) 0x1f);
 
     private final LocalWorkspaceProvider workspaces;
@@ -62,7 +64,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     @Override
     public RepositoryStatus status(WorkspaceId workspace) {
         Path directory = repository(workspace);
-        Processes.Result result = git(directory, LOCAL_TIMEOUT, "status", "--porcelain=v1", "-b");
+        dev.forge.infra.Result result = git(directory, LOCAL_TIMEOUT, "status", "--porcelain=v1", "-b", "-z");
         if (!result.ok()) {
             return RepositoryStatus.NONE;
         }
@@ -72,7 +74,9 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         int behind = -1;
         boolean conflicted = false;
 
-        for (String line : result.output().split("\n")) {
+        String[] records = result.output().split("\\x00", -1);
+        for (int record = 0; record < records.length; record++) {
+            String line = records[record];
             if (line.isBlank()) {
                 continue;
             }
@@ -88,14 +92,12 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             }
             char index = line.charAt(0);
             char worktree = line.charAt(1);
-            String path = line.substring(3).trim();
+            String path = line.substring(3);
             String original = null;
-            if (path.contains(" -> ")) {
-                String[] parts = path.split(" -> ", 2);
-                original = unquote(parts[0]);
-                path = parts[1];
+            if (index == 'R' || index == 'C' || worktree == 'R' || worktree == 'C') {
+                if (++record >= records.length) throw ForgeException.unavailable("Incomplete Git status output");
+                original = records[record];
             }
-            path = unquote(path);
 
             boolean bothModified = index == 'U' || worktree == 'U'
                     || (index == 'A' && worktree == 'A') || (index == 'D' && worktree == 'D');
@@ -121,7 +123,10 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     @Override
     public void stage(WorkspaceId workspace, List<String> paths) {
-        run(workspace, "Stage", List.of("add", "--"), paths);
+        List<String> checked = checkedPaths(paths);
+        Path directory = repository(workspace);
+        rejectActiveFilters(directory, checked);
+        run(directory, "Stage", List.of("add", "--"), checked);
     }
 
     @Override
@@ -153,7 +158,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     public List<Branch> branches(WorkspaceId workspace) {
         Path directory = repository(workspace);
         List<Branch> branches = new ArrayList<>();
-        Processes.Result local = git(directory, LOCAL_TIMEOUT,
+        dev.forge.infra.Result local = git(directory, LOCAL_TIMEOUT,
                 "branch", "--format=%(HEAD)" + SEP + "%(refname:short)");
         for (String line : local.output().split("\n")) {
             String[] parts = line.split(SEP);
@@ -161,7 +166,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
                 branches.add(new Branch(parts[1].trim(), "*".equals(parts[0].trim()), false));
             }
         }
-        Processes.Result remote = git(directory, LOCAL_TIMEOUT, "branch", "-r", "--format=%(refname:short)");
+        dev.forge.infra.Result remote = git(directory, LOCAL_TIMEOUT, "branch", "-r", "--format=%(refname:short)");
         for (String line : remote.output().split("\n")) {
             if (!line.isBlank() && !line.contains("->")) {
                 branches.add(new Branch(line.trim(), false, true));
@@ -203,7 +208,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             command.add("--");
             command.addAll(checkedPaths(List.of(path)));
         }
-        Processes.Result result = git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new));
+        dev.forge.infra.Result result = git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new));
         List<Commit> commits = new ArrayList<>();
         for (String line : result.output().split("\n")) {
             String[] parts = line.split(SEP);
@@ -230,16 +235,48 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     }
 
     private void run(WorkspaceId workspace, String what, List<String> verb, List<String> paths) {
+        run(repository(workspace), what, verb, checkedPaths(paths));
+    }
+
+    private void run(Path directory, String what, List<String> verb, List<String> paths) {
         if (paths.isEmpty()) {
             throw ForgeException.invalidArgument("No paths given to " + what.toLowerCase(java.util.Locale.ROOT));
         }
         List<String> command = new ArrayList<>(verb);
-        command.addAll(checkedPaths(paths));
-        git(repository(workspace), LOCAL_TIMEOUT, command.toArray(String[]::new)).orThrow(what);
+        command.addAll(paths);
+        git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new)).orThrow(what);
     }
 
-    private static Processes.Result git(Path directory, Duration timeout, String... arguments) {
-        List<String> command = new ArrayList<>(List.of("git"));
+    private static void rejectActiveFilters(Path directory, List<String> paths) {
+        if (paths.isEmpty()) {
+            throw ForgeException.invalidArgument("No paths given to stage");
+        }
+        List<String> command = new ArrayList<>(List.of("check-attr", "-z", "filter", "--"));
+        command.addAll(paths);
+        dev.forge.infra.Result result = git(directory, LOCAL_TIMEOUT, command.toArray(String[]::new));
+        if (!result.ok()) {
+            throw ForgeException.unavailable("Could not verify Git attributes before staging");
+        }
+
+        String[] records = result.output().split("\\x00", -1);
+        for (int i = 0; i + 2 < records.length; i += 3) {
+            String value = records[i + 2];
+            if (!value.equals("unspecified") && !value.equals("unset")) {
+                throw ForgeException.invalidArgument(
+                        "Staging files with Git clean/process filters is not supported");
+            }
+        }
+    }
+
+    private static dev.forge.infra.Result git(Path directory, Duration timeout, String... arguments) {
+        List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs", "-c", "core.quotePath=false"));
+        command.addAll(List.of("-c", "core.hooksPath=/dev/null",
+                "-c", "core.fsmonitor=false",
+                "-c", "core.pager=cat",
+                "-c", "pager.status=false",
+                "-c", "pager.diff=false",
+                "-c", "diff.external=",
+                "-c", "protocol.ext.allow=never"));
         command.addAll(List.of(arguments));
         return Processes.run(directory, timeout, command);
     }
@@ -249,14 +286,25 @@ public final class GitSourceControlProvider implements SourceControlProvider {
                 .orElseThrow(() -> ForgeException.unavailable("Workspace is not open locally"));
     }
 
-    /** Refuses anything that could be read as an option rather than a path. */
+
     private static List<String> checkedPaths(List<String> paths) {
-        for (String path : paths) {
-            if (path.isBlank() || path.startsWith("-") || path.contains("..")) {
-                throw ForgeException.invalidArgument("Invalid path: " + path);
-            }
+        if (paths.size() > MAX_PATHS) {
+            throw ForgeException.invalidArgument("Too many paths in one source-control operation");
         }
-        return paths;
+        List<String> checked = new ArrayList<>(paths.size());
+        for (String raw : paths) {
+            if (raw == null || raw.isBlank() || raw.length() > MAX_PATH_CHARS || raw.indexOf('\0') >= 0) {
+                throw ForgeException.invalidArgument("Invalid source-control path");
+            }
+            String path = raw.replace('\\', '/');
+            if (path.startsWith("/") || path.startsWith("-") || path.equals("..")
+                    || path.startsWith("../") || path.endsWith("/..") || path.contains("/../")
+                    || (path.length() > 1 && path.charAt(1) == ':')) {
+                throw ForgeException.invalidArgument("Invalid source-control path");
+            }
+            checked.add(path);
+        }
+        return List.copyOf(checked);
     }
 
     private static ChangeStatus statusOf(char code) {
@@ -281,13 +329,6 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         return digits.isEmpty() ? -1 : Integer.parseInt(digits.toString());
     }
 
-    private static String unquote(String path) {
-        String trimmed = path.trim();
-        return trimmed.length() > 1 && trimmed.startsWith("\"") && trimmed.endsWith("\"")
-                ? trimmed.substring(1, trimmed.length() - 1)
-                : trimmed;
-    }
-
     private static Instant parseDate(String iso) {
         try {
             return java.time.OffsetDateTime.parse(iso).toInstant();
@@ -296,9 +337,9 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         }
     }
 
-    /** Uses the repository's own identity when it has one, a local default otherwise. */
+
     private String identity(Path directory, String key, String fallback) {
-        Processes.Result result = git(directory, LOCAL_TIMEOUT, "config", "--get", key);
+        dev.forge.infra.Result result = git(directory, LOCAL_TIMEOUT, "config", "--get", key);
         String value = result.output().strip();
         if (!result.ok() || value.isEmpty()) {
             log.with("key", key).debug("No git identity configured; using a local default");

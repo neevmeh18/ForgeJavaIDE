@@ -8,13 +8,13 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
-/**
- * Entry point.
- *
- * <p>Deliberately thin: configure logging, read the environment, build the application, install
- * a shutdown hook, wait. Everything interesting is in {@link ForgeApplication}, and the same
- * assembly runs unchanged from a terminal, from an IDE, and inside the container.
- */
+
+
+
+
+
+
+
 public final class Forge {
 
     public static final String PRODUCT = "Forge";
@@ -36,7 +36,7 @@ public final class Forge {
             application.dispose();
             Runtime.getRuntime().halt(1);
         }
-        // The HTTP server owns its own threads; park the main thread until the JVM is told to go.
+
         try {
             Thread.currentThread().join();
         } catch (InterruptedException e) {
@@ -44,11 +44,11 @@ public final class Forge {
         }
     }
 
-    /**
-     * One-line structured output on stdout — the format container log collectors expect. The
-     * framework logs through {@code System.Logger}, so this configures the JDK backend rather
-     * than pulling in a logging framework.
-     */
+
+
+
+
+
     private static void configureLogging(String levelName) {
         Level level = parse(levelName);
         Logger root = Logger.getLogger("");

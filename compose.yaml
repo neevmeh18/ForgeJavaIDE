@@ -1,38 +1,139 @@
-# Forge — local development stack.
-#
-#   docker compose up --build      start (http://localhost:3000)
-#   docker compose down            stop
-#   docker compose logs -f         follow logs
-#
-# One service, because one service is all the framework needs. No database, cache or broker is
-# started: none is required, and requiring one would make the first run slower and more fragile
-# for no architectural gain.
-
 services:
+  secret-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.init
+    image: forge-secret-init:0.1.0
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        if [ ! -s /root-secrets/mongo-root-password ]; then
+          head -c 32 /dev/urandom | base64 | tr -d '\n' > /root-secrets/mongo-root-password
+        fi
+        if [ ! -s /app-secrets/mongo-app-password ]; then
+          head -c 32 /dev/urandom | base64 | tr -d '\n' > /app-secrets/mongo-app-password
+        fi
+        if [ ! -s /terminal-client/password ]; then
+          head -c 32 /dev/urandom | base64 | tr -d '\n' > /terminal-client/password
+        fi
+        if [ ! -s /terminal-host/ssh_host_ed25519_key ]; then
+          ssh-keygen -q -t ed25519 -N '' -f /terminal-host/ssh_host_ed25519_key
+        fi
+        if [ ! -s /terminal-host/ssh_host_ed25519_key.pub ]; then
+          ssh-keygen -y -f /terminal-host/ssh_host_ed25519_key > /terminal-host/ssh_host_ed25519_key.pub
+        fi
+        cp /terminal-client/password /terminal-server/password
+        printf '[forge-terminal]:2222 %s %s\n' "$$(awk '{print $$1}' /terminal-host/ssh_host_ed25519_key.pub)" "$$(awk '{print $$2}' /terminal-host/ssh_host_ed25519_key.pub)" > /terminal-known-hosts/known_hosts
+        chmod 0444 /root-secrets/mongo-root-password /app-secrets/mongo-app-password /terminal-client/password /terminal-known-hosts/known_hosts
+        chmod 0400 /terminal-server/password /terminal-host/ssh_host_ed25519_key
+        chmod 0444 /terminal-host/ssh_host_ed25519_key.pub
+    volumes:
+      - forge-root-secret:/root-secrets
+      - forge-app-secret:/app-secrets
+      - forge-terminal-client-secret:/terminal-client
+      - forge-terminal-server-secret:/terminal-server
+      - forge-terminal-host-key:/terminal-host
+      - forge-terminal-known-hosts:/terminal-known-hosts
+
+  mongodb:
+    image: mongo:8.0
+    restart: unless-stopped
+    depends_on:
+      secret-init:
+        condition: service_completed_successfully
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: forge_root
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/forge-root-secret/mongo-root-password
+    volumes:
+      - mongo-data:/data/db
+      - forge-root-secret:/run/forge-root-secret:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' mongodb://127.0.0.1:27017/test | grep 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:8.0
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        ROOT="$$(cat /run/forge-root-secret/mongo-root-password)"
+        APP="$$(cat /run/forge-app-secret/mongo-app-password)"
+        mongosh --quiet --host mongodb --username forge_root --password "$$ROOT" --authenticationDatabase admin --eval "db.getSiblingDB('admin').updateUser('forge_app',{pwd:'$$APP',roles:[{role:'readWrite',db:'forge'}]})" || \
+        mongosh --quiet --host mongodb --username forge_root --password "$$ROOT" --authenticationDatabase admin --eval "db.getSiblingDB('admin').createUser({user:'forge_app',pwd:'$$APP',roles:[{role:'readWrite',db:'forge'}]})"
+    volumes:
+      - forge-root-secret:/run/forge-root-secret:ro
+      - forge-app-secret:/run/forge-app-secret:ro
+
+  forge-terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile.terminal
+    image: forge-terminal:0.1.0
+    restart: unless-stopped
+    depends_on:
+      secret-init:
+        condition: service_completed_successfully
+    volumes:
+      - "${IDE_WORKSPACE:-./workspace}:/workspace"
+      - forge-terminal-server-secret:/run/forge-terminal-server-secret:ro
+      - forge-terminal-host-key:/run/forge-terminal-host-key:ro
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${IDE_TERMINAL_PIDS_LIMIT:-256}
+    mem_limit: "${IDE_TERMINAL_MEMORY_LIMIT:-1g}"
+    cpus: "${IDE_TERMINAL_CPU_LIMIT:-2.0}"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/2222'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
   forge:
     build:
       context: .
       dockerfile: Dockerfile
     image: forge-ide:0.1.0
     container_name: forge
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      forge-terminal:
+        condition: service_healthy
     ports:
-      - "${IDE_PORT:-3000}:3000"
+      - "127.0.0.1:${IDE_PORT:-3000}:3000"
     environment:
-      # Change IDE_AUTH_PASSWORD before exposing this beyond localhost. Without it the backend
-      # falls back to a development default and says so, loudly, at startup.
+      IDE_HOST: "0.0.0.0"
       IDE_AUTH_USER: "${IDE_AUTH_USER:-developer}"
-      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:-forge}"
+      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:?Set IDE_AUTH_PASSWORD before starting Forge}"
       IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
+      IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"
+      IDE_MAX_STATE_MB: "${IDE_MAX_STATE_MB:-32}"
     volumes:
-      # Point IDE_WORKSPACE at any directory to work on it: IDE_WORKSPACE=~/code docker compose up
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
-      # Settings and persisted workbench state outlive the container; caches do not belong here.
       - forge-data:/data
+      - forge-app-secret:/run/forge-app-secret:ro
+      - forge-terminal-client-secret:/run/forge-terminal-client-secret:ro
+      - forge-terminal-known-hosts:/run/forge-terminal-known-hosts:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    pids_limit: ${IDE_PIDS_LIMIT:-512}
+    mem_limit: "${IDE_MEMORY_LIMIT:-4g}"
+    cpus: "${IDE_CPU_LIMIT:-4.0}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
@@ -43,3 +144,10 @@ services:
 
 volumes:
   forge-data:
+  mongo-data:
+  forge-root-secret:
+  forge-app-secret:
+  forge-terminal-client-secret:
+  forge-terminal-server-secret:
+  forge-terminal-host-key:
+  forge-terminal-known-hosts:

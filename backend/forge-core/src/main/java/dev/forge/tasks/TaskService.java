@@ -2,9 +2,9 @@ package dev.forge.tasks;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.TaskExecutionId;
-import dev.forge.core.Ids.TerminalId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.TaskExecutionId;
+import dev.forge.core.TerminalId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -16,44 +16,22 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Discovers tasks and runs them.
- *
- * <p>The task engine owns the lifecycle — {@code RUNNING}, {@code SUCCEEDED}, {@code FAILED},
- * {@code CANCELLED} — and borrows a terminal purely for presentation. Correlating a terminal's
- * exit with a task execution happens here, through events, so the terminal feature knows
- * nothing about tasks and could be swapped for a different presentation entirely.
- */
-public final class TaskService implements Lifecycle.Component {
+
+public final class TaskService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(TaskService.class);
+    private static final int MAX_RETAINED_EXECUTIONS_PER_WORKSPACE = 200;
 
-    public enum State {
-        RUNNING,
-        SUCCEEDED,
-        FAILED,
-        CANCELLED
-    }
 
-    public record Execution(
-            TaskExecutionId id,
-            String taskId,
-            String name,
-            WorkspaceId workspaceId,
-            TerminalId terminalId,
-            State state,
-            int exitCode,
-            Instant startedAt) {
 
-        Execution finished(State newState, int code) {
-            return new Execution(id, taskId, name, workspaceId, terminalId, newState, code, startedAt);
-        }
-    }
+
 
     private final Map<TaskExecutionId, Execution> executions = new ConcurrentHashMap<>();
     private final Map<TerminalId, TaskExecutionId> byTerminal = new ConcurrentHashMap<>();
+    private final Set<TaskExecutionId> cancellationRequested = ConcurrentHashMap.newKeySet();
     private final List<TaskProvider> providers;
     private final TerminalService terminals;
     private final EventBus events;
@@ -67,15 +45,26 @@ public final class TaskService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        subscriptions.add(events.subscribe(TerminalEvents.TerminalExited.class, this::onTerminalExited));
+        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceClosed.class, event -> {
+            executions.values().removeIf(value -> {
+                if (!value.workspaceId().equals(event.workspaceId())) return false;
+                byTerminal.remove(value.terminalId());
+                cancellationRequested.remove(value.id());
+                return true;
+            });
+        }));
+        subscriptions.add(events.subscribe(dev.forge.terminal.TerminalExited.class,
+                event -> finishTerminal(event.terminalId(), event.exitCode())));
     }
 
     @Override
     public void dispose() {
         subscriptions.dispose();
+        byTerminal.clear();
+        cancellationRequested.clear();
+        executions.clear();
     }
 
-    /** Every task any provider offers for this workspace. */
     public List<Task> available(WorkspaceId workspace) {
         List<Task> tasks = new ArrayList<>();
         for (TaskProvider provider : providers) {
@@ -95,25 +84,39 @@ public final class TaskService implements Lifecycle.Component {
                 .findFirst()
                 .orElseThrow(() -> ForgeException.notFound("Unknown task: " + taskId).with("taskId", taskId));
 
-        TerminalService.TerminalInfo terminal = task.shell()
+        dev.forge.terminal.TerminalInfo terminal = task.shell()
                 ? terminals.run(workspace, "/bin/sh", List.of("-c", commandLine(task)), task.cwd(),
                         task.name(), task.env())
-                : terminals.run(workspace, task.executable(), task.arguments(), task.cwd(),
-                        task.name(), task.env());
+                : terminals.run(workspace, task.executable(), task.arguments(), task.cwd(), task.name(), task.env());
 
         Execution execution = new Execution(TaskExecutionId.of(Ids.random("task")), task.id(), task.name(),
                 workspace, terminal.id(), State.RUNNING, -1, Instant.now());
         executions.put(execution.id(), execution);
         byTerminal.put(terminal.id(), execution.id());
+        prune(workspace);
         log.with("workspaceId", workspace).with("taskId", task.id()).info("Task started");
-        events.publish(new TaskEvents.TaskStarted(workspace, execution.id(), task.id(), task.name()));
-        return execution;
+        events.publish(new dev.forge.tasks.TaskStarted(workspace, execution.id(), task.id(), task.name()));
+
+
+
+        var early = terminals.consumeExitCode(terminal.id());
+        if (early.isPresent()) {
+            finishTerminal(terminal.id(), early.getAsInt());
+        }
+        return executions.getOrDefault(execution.id(), execution);
     }
 
     public void cancel(TaskExecutionId id, WorkspaceId workspace) {
-        Execution execution = require(id, workspace);
-        if (execution.state() == State.RUNNING) {
-            terminals.kill(execution.terminalId(), workspace);
+        TerminalId terminalId = null;
+        synchronized (executions) {
+            Execution execution = require(id, workspace);
+            if (execution.state() == State.RUNNING) {
+                cancellationRequested.add(id);
+                terminalId = execution.terminalId();
+            }
+        }
+        if (terminalId != null) {
+            terminals.kill(terminalId, workspace);
         }
     }
 
@@ -130,33 +133,51 @@ public final class TaskService implements Lifecycle.Component {
                 .orElseThrow(() -> ForgeException.notFound("Unknown task execution: " + id));
     }
 
-    private void onTerminalExited(TerminalEvents.TerminalExited event) {
-        TaskExecutionId id = byTerminal.remove(event.terminalId());
-        if (id == null) {
-            return;
+    private void finishTerminal(TerminalId terminalId, int exitCode) {
+        Execution finished;
+        State state;
+        TaskExecutionId id;
+        synchronized (executions) {
+            id = byTerminal.remove(terminalId);
+            if (id == null) {
+                return;
+            }
+            terminals.consumeExitCode(terminalId);
+            Execution execution = executions.get(id);
+            if (execution == null || execution.state() != State.RUNNING) {
+                cancellationRequested.remove(id);
+                return;
+            }
+            boolean cancellation = cancellationRequested.remove(id)
+                    || exitCode == 130 || exitCode == 137 || exitCode == 143;
+            state = cancellation ? State.CANCELLED : exitCode == 0 ? State.SUCCEEDED : State.FAILED;
+            finished = execution.finished(state, exitCode);
+            executions.put(id, finished);
+            prune(finished.workspaceId());
         }
-        Execution execution = executions.get(id);
-        if (execution == null) {
-            return;
-        }
-        State state = switch (event.exitCode()) {
-            case 0 -> State.SUCCEEDED;
-            case 130, 137, 143 -> State.CANCELLED;
-            default -> State.FAILED;
-        };
-        Execution finished = execution.finished(state, event.exitCode());
-        executions.put(id, finished);
         log.with("taskId", finished.taskId()).with("state", state).info("Task finished");
-        events.publish(new TaskEvents.TaskFinished(finished.workspaceId(), id, finished.taskId(),
-                state.name(), event.exitCode()));
+        events.publish(new dev.forge.tasks.TaskFinished(finished.workspaceId(), id, finished.taskId(),
+                state.name(), exitCode));
     }
 
-    /** Quotes arguments so a shell task cannot be broken by a space in a path. */
+    private void prune(WorkspaceId workspace) {
+        List<Execution> finished = executions.values().stream()
+                .filter(value -> value.workspaceId().equals(workspace) && value.state() != State.RUNNING)
+                .sorted(Comparator.comparing(Execution::startedAt).reversed())
+                .toList();
+        finished.stream().skip(MAX_RETAINED_EXECUTIONS_PER_WORKSPACE)
+                .forEach(value -> executions.remove(value.id(), value));
+    }
+
     private static String commandLine(Task task) {
-        StringBuilder line = new StringBuilder(task.executable());
+        StringBuilder line = new StringBuilder(shellQuote(task.executable()));
         for (String argument : task.arguments()) {
-            line.append(" '").append(argument.replace("'", "'\\''")).append('\'');
+            line.append(' ').append(shellQuote(argument));
         }
         return line.toString();
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 }

@@ -1,19 +1,20 @@
+import type { QuickPickItem } from "./commandPalette/QuickPickItem";
 import type { CommandRouter } from '../forge/commands';
 import type { Keybindings } from '../forge/keybindings';
 import type { CommandView } from '../forge/protocol';
 import { clear, el } from './dom';
 
-/**
- * The command palette.
- *
- * <p>It shows whatever the backend's command registry reports, including everything extensions
- * contributed, because the list is a query result rather than a hard-coded menu. Choosing an
- * entry executes the command id — the same path a keybinding or a menu item takes.
- *
- * <p>It also serves as a quick-open for files by switching to the `search.files` command when
- * the query is not prefixed with `>`.
- */
-export type QuickPickItem = { id: string; label: string; detail?: string; hint?: string };
+
+
+
+
+
+
+
+
+
+
+
 
 export class CommandPalette {
   readonly element = el('div', { class: 'palette-overlay', hidden: 'true' });
@@ -39,17 +40,17 @@ export class CommandPalette {
     this.input.addEventListener('keydown', (event) => this.onKey(event));
   }
 
-  /** Opens the palette over the full command list. */
+
   openCommands(): void {
     this.open('> ', async (query) => this.commandItems(query));
   }
 
-  /** Opens the palette as a file picker driven by the backend's `search.files` command. */
+
   openFiles(): void {
     this.open('', async (query) => this.fileItems(query));
   }
 
-  /** Generic quick pick, used by branch selection, task selection and the like. */
+
   pick(placeholder: string, items: QuickPickItem[]): Promise<QuickPickItem | null> {
     return new Promise((resolve) => {
       this.resolveChoice = resolve;
@@ -171,7 +172,7 @@ export class CommandPalette {
     const wasCommand = this.input.value.startsWith('> ');
     this.close(null);
     if (wasCommand) {
-      void this.commands.execute(item.id);
+      void this.commands.execute(item.id).catch((error: unknown) => window.alert(error instanceof Error ? error.message : String(error)));
     } else {
       void this.commands.execute('workbench.openFile', { path: item.id });
     }
@@ -184,3 +185,5 @@ function matches(command: CommandView, needle: string): boolean {
   }
   return `${command.category} ${command.title} ${command.id}`.toLowerCase().includes(needle);
 }
+
+export type { QuickPickItem } from "./commandPalette/QuickPickItem";

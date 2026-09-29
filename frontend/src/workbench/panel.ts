@@ -1,18 +1,19 @@
+import type { DiagnosticEntry } from "./panel/DiagnosticEntry";
 import type { WorkbenchContext } from '../forge/context';
 import type { TaskInfo, ViewContribution } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 import { TerminalView } from './terminalView';
 
-/**
- * The bottom panel: terminal, problems and tasks.
- *
- * <p>Its tabs come from the contributed views whose container is `panel`, the same mechanism the
- * sidebar uses, so an extension can add a panel without the workbench knowing about it.
- *
- * <p>Problems are collected from `language.diagnostics` events. Tasks are listed by a query and
- * started by the `task.run` command — the panel never runs anything itself.
- */
+
+
+
+
+
+
+
+
+
 export class Panel {
   readonly element = el('section', { class: 'panel', hidden: 'true' });
 
@@ -70,15 +71,27 @@ export class Panel {
     } else if (viewId === 'tasks') {
       this.body.append(this.tasks);
       void this.renderTasks();
-    } else {
+    } else if (viewId === 'problems') {
       this.body.append(this.problems);
       this.renderProblems();
     }
+    if (!this.body.childElementCount) this.body.append(el('p', { class: 'view-empty', text: 'This view has no supported renderer.' }));
     this.renderTabs();
   }
 
   problemCount(): number {
     return [...this.diagnostics.values()].reduce((total, list) => total + list.length, 0);
+  }
+
+  resetWorkspace(): void {
+    clear(this.tasks);
+    this.diagnostics.clear();
+    this.renderProblems();
+    this.terminal.resetWorkspace();
+  }
+
+  applySettings(settings: Map<string, unknown>): void {
+    this.terminal.applySettings(settings);
   }
 
   private renderTabs(): void {
@@ -153,8 +166,4 @@ export class Panel {
   }
 }
 
-interface DiagnosticEntry {
-  range: { start: { line: number; character: number }; end: { line: number; character: number } };
-  severity: string;
-  message: string;
-}
+export type { DiagnosticEntry } from "./panel/DiagnosticEntry";

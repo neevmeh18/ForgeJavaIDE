@@ -3,16 +3,16 @@ import type { WorkbenchContext } from '../forge/context';
 import type { DirEntry, MenuItem } from '../forge/protocol';
 import { clear, el, fileIcon } from './dom';
 
-/**
- * The file tree.
- *
- * <p>Children are fetched per directory with the `file.list` query, never by walking the tree in
- * the browser: a workspace may be large, remote, or both, and the backend is the only place that
- * can answer cheaply. The view keeps expansion state and nothing else.
- *
- * <p>The context menu is built from contributed `menu.explorer.context` items, so an extension's
- * file action appears here automatically.
- */
+
+
+
+
+
+
+
+
+
+
 export class Explorer {
   readonly element = el('div', { class: 'view explorer' });
 
@@ -20,6 +20,7 @@ export class Explorer {
   private readonly expanded = new Set<string>();
   private contextMenuItems: MenuItem[] = [];
   private selected: string | null = null;
+  private selectedIsDirectory = false;
 
   constructor(private readonly ctx: WorkbenchContext) {
     const actions = el(
@@ -31,7 +32,7 @@ export class Explorer {
     );
     this.element.append(el('div', { class: 'view-header' }, el('h2', { text: 'Explorer' }), actions), this.tree);
 
-    // Any change on disk — ours, another session's, or a build's — redraws the affected folder.
+
     for (const type of ['file.created', 'file.deleted', 'file.moved']) {
       ctx.on(type, () => void this.refresh());
     }
@@ -39,6 +40,14 @@ export class Explorer {
       this.expanded.clear();
       void this.refresh();
     });
+  }
+
+  resetWorkspace(): void {
+    this.selected = null;
+    this.selectedIsDirectory = false;
+    this.expanded.clear();
+    clear(this.tree);
+    document.querySelector('.context-menu')?.remove();
   }
 
   setContextMenu(items: MenuItem[]): void {
@@ -95,6 +104,7 @@ export class Explorer {
 
     row.addEventListener('click', () => {
       this.selected = entry.path;
+      this.selectedIsDirectory = entry.directory;
       if (entry.directory) {
         if (this.expanded.has(entry.path)) {
           this.expanded.delete(entry.path);
@@ -109,6 +119,7 @@ export class Explorer {
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       this.selected = entry.path;
+      this.selectedIsDirectory = entry.directory;
       this.showContextMenu(event, entry);
     });
     return row;
@@ -129,7 +140,11 @@ export class Explorer {
       menu.append(button);
     }
     document.body.append(menu);
-    const dismiss = () => {
+
+
+
+    const dismiss = (dismissEvent: MouseEvent) => {
+      if (menu.contains(dismissEvent.target as Node)) return;
       menu.remove();
       document.removeEventListener('mousedown', dismiss);
     };
@@ -183,9 +198,9 @@ export class Explorer {
     if (!this.selected) {
       return '';
     }
-    return this.expanded.has(this.selected)
-      ? this.selected
-      : this.selected.slice(0, Math.max(0, this.selected.lastIndexOf('/')));
+    if (this.selectedIsDirectory) return this.selected;
+    const slash = this.selected.lastIndexOf('/');
+    return slash < 0 ? '' : this.selected.slice(0, slash);
   }
 
   private action(label: string, handler: () => void): HTMLButtonElement {

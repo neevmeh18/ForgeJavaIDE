@@ -1,6 +1,6 @@
 package dev.forge.core.event;
 
-import dev.forge.core.Lifecycle.Disposable;
+import dev.forge.core.Disposable;
 import dev.forge.core.Log;
 import java.util.List;
 import java.util.Map;
@@ -8,16 +8,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
-/**
- * In-process publish/subscribe for completed occurrences.
- *
- * <p>A modular monolith needs decoupled notification, not a message broker: features publish
- * what happened, other features and the transport react, and nobody acquires a compile-time
- * dependency on the publisher.
- *
- * <p>Delivery is synchronous on the publishing thread and isolated per listener — a listener
- * that throws is logged and skipped, and cannot break the feature that published the event.
- */
+
+
+
+
+
+
+
+
+
+
 public final class EventBus {
 
     private static final Log log = Log.of(EventBus.class);
@@ -32,7 +32,7 @@ public final class EventBus {
         return () -> typed.getOrDefault(type, List.of()).remove(erased);
     }
 
-    /** Used by the transport, which forwards everything it is allowed to forward. */
+
     public Disposable subscribeAll(Consumer<Event> listener) {
         all.add(listener);
         return () -> all.remove(listener);

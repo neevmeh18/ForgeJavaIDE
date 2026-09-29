@@ -1,21 +1,21 @@
 package dev.forge.core;
 
-import dev.forge.core.Ids.SessionId;
-import dev.forge.core.Ids.UserId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.SessionId;
+import dev.forge.core.UserId;
+import dev.forge.core.WorkspaceId;
 import java.util.Optional;
 
-/**
- * Who is asking, on behalf of which workspace, and how to cancel.
- *
- * <p>Passed explicitly into every command and query. There is deliberately no
- * {@code CurrentUser.get()} or {@code CurrentWorkspace.instance()}: a workspace may be driven
- * by several sessions at once (collaboration) and by non-human callers (CLI, automation, a
- * future agent), so ambient state would be wrong as soon as the framework grows up.
- *
- * <p>{@code userId} and {@code sessionId} are absent only for the handful of commands that run
- * before authentication, such as {@code auth.login}.
- */
+
+
+
+
+
+
+
+
+
+
+
 public record RequestContext(
         UserId userId,
         SessionId sessionId,
@@ -23,21 +23,15 @@ public record RequestContext(
         Origin origin,
         Cancellation.Token cancellation) {
 
-    /** Where the call came from. Useful for auditing and for future policy decisions. */
-    public enum Origin {
-        UI,
-        EXTENSION,
-        CLI,
-        AUTOMATION,
-        SYSTEM
-    }
+
+
 
     public RequestContext {
         origin = origin == null ? Origin.UI : origin;
         cancellation = cancellation == null ? Cancellation.none() : cancellation;
     }
 
-    /** Context for framework-internal work that has no user behind it. */
+
     public static RequestContext system() {
         return new RequestContext(null, null, null, Origin.SYSTEM, Cancellation.none());
     }

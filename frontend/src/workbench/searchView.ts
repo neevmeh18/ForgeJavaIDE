@@ -3,13 +3,13 @@ import type { TextSearchResult } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * Workspace text search.
- *
- * <p>Runs `search.text`, which is a command rather than a query precisely because it can take a
- * while and must be cancellable. Nothing is scanned in the browser: the workspace may be remote,
- * and the backend already has the filesystem capability that knows how to reach it.
- */
+
+
+
+
+
+
+
 export class SearchView {
   readonly element = el('div', { class: 'view search-view' });
 
@@ -23,7 +23,10 @@ export class SearchView {
   private readonly caseSensitive = el('input', { type: 'checkbox', id: 'search-case' });
   private readonly results = el('div', { class: 'search-results' });
   private readonly summary = el('p', { class: 'search-summary' });
+  private readonly savedId = el('input', { class: 'field', type: 'text', placeholder: 'Saved search ID', spellcheck: 'false' });
+  private readonly savedStatus = el('p', { class: 'search-summary' });
   private running: string | null = null;
+  private generation = 0;
 
   constructor(private readonly ctx: WorkbenchContext) {
     const options = el(
@@ -32,9 +35,25 @@ export class SearchView {
       el('label', { for: 'search-regex' }, this.regex, ' Regex'),
       el('label', { for: 'search-case' }, this.caseSensitive, ' Match case'),
     );
+    const saveButton = el('button', { class: 'button', type: 'button', text: 'Save search' });
+    const loadButton = el('button', { class: 'button', type: 'button', text: 'Load & search' });
+    saveButton.addEventListener('click', () => void this.saveSearch());
+    loadButton.addEventListener('click', () => void this.runSavedSearch());
+
     this.element.append(
       el('div', { class: 'view-header' }, el('h2', { text: 'Search' })),
-      el('div', { class: 'search-form' }, this.query, options, this.summary),
+      el('div', { class: 'search-form' },
+        this.query, options,
+        el('div', { class: 'search-actions' },
+          saveButton,
+        ),
+        this.summary,
+        el('div', { class: 'saved-search-form' },
+          this.savedId,
+          loadButton,
+        ),
+        this.savedStatus,
+      ),
       this.results,
     );
 
@@ -48,21 +67,18 @@ export class SearchView {
       }
     });
 
-    // A long search reports its result as an event; this is the async command path in use.
-    ctx.on('command.completed', (event) => {
-      const payload = event.payload as { executionId: string; commandId: string; result: unknown };
-      if (payload.executionId === this.running && payload.commandId === 'search.text') {
-        this.running = null;
-        this.render(payload.result as TextSearchResult);
-      }
-    });
-    ctx.on('command.failed', (event) => {
-      const payload = event.payload as { executionId: string; message: string };
-      if (payload.executionId === this.running) {
-        this.running = null;
-        this.summary.textContent = payload.message;
-      }
-    });
+  }
+
+  resetWorkspace(): void {
+    this.generation++;
+    const previous = this.running;
+    this.running = null;
+    if (previous) void this.ctx.client.command('command.cancel', { executionId: previous }).catch(() => undefined);
+    clear(this.results);
+    this.query.value = '';
+    this.summary.textContent = '';
+    this.savedId.value = '';
+    this.savedStatus.textContent = '';
   }
 
   focus(): void {
@@ -71,25 +87,66 @@ export class SearchView {
   }
 
   private async run(): Promise<void> {
+    const generation = ++this.generation;
+    const workspace = this.ctx.client.workspaceGeneration;
     const text = this.query.value;
-    if (!text) {
-      clear(this.results);
-      this.summary.textContent = '';
-      return;
-    }
-    this.summary.textContent = 'Searching…';
+    const previous = this.running;
+    this.running = null;
+    if (previous) await this.ctx.client.command('command.cancel', { executionId: previous }).catch(() => undefined);
+    if (generation !== this.generation || workspace !== this.ctx.client.workspaceGeneration) return;
     clear(this.results);
+    this.summary.textContent = text ? 'Searching…' : '';
+    if (!text) return;
     try {
-      // Started asynchronously so a slow search never blocks the request, and so pressing
-      // Escape can cancel it through command.cancel.
-      this.running = await this.ctx.client.commandAsync('search.text', {
-        query: text,
-        regex: this.regex.checked,
-        caseSensitive: this.caseSensitive.checked,
-        limit: 500,
+      const executionId = await this.ctx.client.commandAsync('search.text', {
+        query: text, regex: this.regex.checked, caseSensitive: this.caseSensitive.checked, limit: 500,
       });
+      if (generation !== this.generation || workspace !== this.ctx.client.workspaceGeneration) {
+        await this.ctx.client.command('command.cancel', { executionId }).catch(() => undefined);
+        return;
+      }
+      this.running = executionId;
+      const result = await this.ctx.client.waitForCommand<TextSearchResult>(executionId, workspace);
+      if (generation === this.generation) this.render(result);
     } catch (error) {
-      this.summary.textContent = describe(error);
+      if (generation === this.generation) this.summary.textContent = describe(error);
+    } finally {
+      if (generation === this.generation) this.running = null;
+    }
+  }
+
+  private async saveSearch(): Promise<void> {
+    const text = this.query.value.trim();
+    if (!text) { this.savedStatus.textContent = 'Enter a search first'; return; }
+    try {
+      const result = await this.ctx.commands.execute<{ id: string }>('search.saved.save', {
+        query: text, regex: this.regex.checked, caseSensitive: this.caseSensitive.checked,
+      }) as { id: string };
+      this.savedId.value = result.id;
+      this.savedStatus.textContent = `Saved as ${result.id}`;
+    } catch (error) {
+      this.savedStatus.textContent = describe(error);
+    }
+  }
+
+  private async runSavedSearch(): Promise<void> {
+    const id = this.savedId.value.trim();
+    if (!id) { this.savedStatus.textContent = 'Enter a saved search ID'; return; }
+    const generation = ++this.generation;
+    const workspace = this.ctx.client.workspaceGeneration;
+    clear(this.results);
+    this.summary.textContent = 'Searching…';
+    try {
+      const loaded = await this.ctx.commands.execute<{ query: string; regex: boolean; caseSensitive: boolean; result: TextSearchResult }>('search.saved.run', { id }) as { query: string; regex: boolean; caseSensitive: boolean; result: TextSearchResult };
+      if (generation === this.generation && workspace === this.ctx.client.workspaceGeneration) {
+        this.query.value = loaded.query;
+        this.regex.checked = loaded.regex;
+        this.caseSensitive.checked = loaded.caseSensitive;
+        this.savedStatus.textContent = `Loaded ${id}`;
+        this.render(loaded.result);
+      }
+    } catch (error) {
+      if (generation === this.generation) this.summary.textContent = describe(error);
     }
   }
 

@@ -3,12 +3,12 @@ import type { ExtensionStatus, ResolvedSetting } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * Two small read-and-edit views that share a shape: list what the backend declares, let the
- * user act on one entry. Keeping them together is cheaper to read than two near-identical files.
- */
 
-/** Shows installed extensions, their lifecycle state, and why a failed one failed. */
+
+
+
+
+
 export class ExtensionsView {
   readonly element = el('div', { class: 'view extensions-view' });
 
@@ -20,6 +20,7 @@ export class ExtensionsView {
       this.list,
     );
     ctx.on('extension.activated', () => void this.refresh());
+    ctx.on('extension.deactivated', () => void this.refresh());
     ctx.on('extension.failed', (event) => {
       const payload = event.payload as { extensionId: string; reason: string };
       ctx.notify('warning', `Extension ${payload.extensionId} failed: ${payload.reason}`);
@@ -54,6 +55,14 @@ export class ExtensionsView {
         el('div', { class: `extension-state state-${extension.state.toLowerCase()}`, text: extension.state }),
         extension.failure ? el('div', { class: 'extension-failure', text: extension.failure }) : null,
       );
+      if (extension.state === 'ACTIVATED') {
+        const deactivate = el('button', { class: 'view-action', text: 'Deactivate' });
+        deactivate.addEventListener('click', () => {
+          void this.ctx.commands.execute('extension.deactivate', { extensionId: extension.id }).then(() => this.refresh())
+            .catch((error: unknown) => this.ctx.notify('error', describe(error)));
+        });
+        row.append(deactivate);
+      }
       if (extension.state === 'DISCOVERED' || extension.state === 'DEACTIVATED') {
         const activate = el('button', { class: 'view-action', text: 'Activate' });
         activate.addEventListener('click', () => {
@@ -69,13 +78,13 @@ export class ExtensionsView {
   }
 }
 
-/**
- * The settings editor.
- *
- * <p>Renders whatever `settings.definitions` declares — including settings contributed by an
- * extension — and writes through `settings.set`. Types, allowed values and which layer a value
- * came from are the backend's answers, so the UI cannot invent a setting or accept an invalid one.
- */
+
+
+
+
+
+
+
 export class SettingsView {
   readonly element = el('div', { class: 'view settings-view' });
 

@@ -3,15 +3,15 @@ package dev.forge.tasks;
 import java.util.List;
 import java.util.Map;
 
-/**
- * A named development operation: build, run, test, deploy, generate, or anything a product or
- * workspace defines.
- *
- * <p>Tasks and terminals are different things. A task is a described, repeatable operation with
- * a lifecycle the IDE tracks; a terminal is one way to show it running. Modelling tasks as
- * "whatever someone typed into a shell" loses the description, the status and the ability to
- * offer the same operation from a menu, a keybinding or automation.
- */
+
+
+
+
+
+
+
+
+
 public record Task(
         String id,
         String name,

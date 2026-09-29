@@ -4,9 +4,9 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
+import dev.forge.core.query.QueryDescriptor;
 
-/** {@code task.*} commands and queries. */
+
 public final class TaskCommands {
 
     private final TaskService tasks;
@@ -17,13 +17,13 @@ public final class TaskCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("task.run", "Tasks", "Run Task")
+                CommandDescriptor.of("task.run", "Tasks", "Run Task") .withArguments(new dev.forge.core.command.Argument("taskId", "string", "taskId"))
                         .describedAs("Runs a task defined by the workspace or a provider")
                         .workspaceScoped().asSensitive(),
                 ctx -> tasks.run(ctx.requireWorkspace(), ctx.args().requiredString("taskId")));
 
         commands.register(
-                CommandDescriptor.of("task.cancel", "Tasks", "Cancel Task").workspaceScoped().asSensitive(),
+                CommandDescriptor.of("task.cancel", "Tasks", "Cancel Task") .withArguments(new dev.forge.core.command.Argument("executionId", "string", "executionId")).workspaceScoped().asSensitive(),
                 ctx -> {
                     tasks.cancel(ctx.args().taskExecutionId("executionId"), ctx.requireWorkspace());
                     return null;
@@ -37,7 +37,7 @@ public final class TaskCommands {
                 QueryDescriptor.of("task.executions", "Recent task runs").workspaceScoped(),
                 (ctx, args) -> tasks.executions(ctx.requireWorkspace()));
 
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
-                ContributionRegistry.MENU_VIEW, "task.run", "Run Task…", "panel", 20));
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
+                ContributionRegistry.MENU_VIEW, "workbench.runTask", "Run Task…", "panel", 20));
     }
 }

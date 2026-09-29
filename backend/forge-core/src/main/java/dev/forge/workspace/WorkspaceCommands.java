@@ -1,15 +1,15 @@
 package dev.forge.workspace;
 
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
+import dev.forge.core.query.QueryDescriptor;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** {@code workspace.*} commands and queries. */
+
 public final class WorkspaceCommands {
 
     private final WorkspaceService workspaces;
@@ -20,7 +20,7 @@ public final class WorkspaceCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("workspace.open", "Workspace", "Open Workspace")
+                CommandDescriptor.of("workspace.open", "Workspace", "Open Workspace") .withArguments(new dev.forge.core.command.Argument("workspaceId", "string", "workspaceId"))
                         .describedAs("Opens a workspace and attaches the current session to it")
                         .asSensitive(),
                 ctx -> workspaces.open(WorkspaceId.of(ctx.args().requiredString("workspaceId")), ctx.sessionId()));
@@ -29,11 +29,7 @@ public final class WorkspaceCommands {
                 CommandDescriptor.of("workspace.close", "Workspace", "Close Workspace")
                         .workspaceScoped().asSensitive(),
                 ctx -> {
-                    WorkspaceId id = ctx.requireWorkspace();
-                    workspaces.detach(id, ctx.sessionId());
-                    if (workspaces.sessions(id).isEmpty()) {
-                        workspaces.close(id);
-                    }
+                    workspaces.release(ctx.requireWorkspace(), ctx.sessionId());
                     return null;
                 });
 
@@ -43,7 +39,7 @@ public final class WorkspaceCommands {
                 ctx -> workspaces.reload(ctx.requireWorkspace()));
 
         commands.register(
-                CommandDescriptor.of("workspace.create", "Workspace", "New Workspace").asSensitive(),
+                CommandDescriptor.of("workspace.create", "Workspace", "New Workspace") .withArguments(new dev.forge.core.command.Argument("name", "string", "name")).asSensitive(),
                 ctx -> {
                     Map<String, String> options = new LinkedHashMap<>();
                     ctx.args().nested("options").values()
@@ -68,11 +64,11 @@ public final class WorkspaceCommands {
                 QueryDescriptor.of("workspace.sessions", "Sessions attached to the current workspace")
                         .workspaceScoped(),
                 (ctx, args) -> workspaces.sessions(ctx.requireWorkspace()).stream()
-                        .map(dev.forge.core.Ids.SessionId::value).sorted().toList());
+                        .map(dev.forge.core.SessionId::value).sorted().toList());
 
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
-                ContributionRegistry.MENU_FILE, "workspace.open", "Open Workspace…", "workspace", 1));
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
+                ContributionRegistry.MENU_FILE, "workbench.openWorkspace", "Open Workspace…", "workspace", 1));
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
                 ContributionRegistry.MENU_FILE, "workspace.close", "Close Workspace", "workspace", 2));
     }
 }

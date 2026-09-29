@@ -1,30 +1,30 @@
 package dev.forge.core;
 
-import dev.forge.core.Ids.DebugSessionId;
-import dev.forge.core.Ids.DocumentId;
-import dev.forge.core.Ids.TaskExecutionId;
-import dev.forge.core.Ids.TerminalId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.DebugSessionId;
+import dev.forge.core.DocumentId;
+import dev.forge.core.TaskExecutionId;
+import dev.forge.core.TerminalId;
+import dev.forge.core.WorkspaceId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Typed, framework-neutral access to command and query arguments.
- *
- * <p>Arguments are restricted to JSON-shaped values: string, number, boolean, list, map, null.
- * Nothing from a transport or a UI toolkit ever gets this far — there is no way to hand a
- * {@code MouseEvent}, a Monaco model or an HTTP request object to application logic.
- *
- * <p>Accessors validate as they read, so handlers do not each re-implement argument checking:
- * a missing or mistyped argument produces {@code INVALID_ARGUMENT} with the offending name.
- */
+
+
+
+
+
+
+
+
+
+
 public record Args(Map<String, Object> values) {
 
     public static final Args EMPTY = new Args(Map.of());
 
     public Args {
-        values = values == null ? Map.of() : Map.copyOf(values);
+        values = values == null ? Map.of() : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(values));
     }
 
     public static Args of(Map<String, Object> values) {
@@ -56,9 +56,35 @@ public record Args(Map<String, Object> values) {
             return Optional.empty();
         }
         if (!(value instanceof Number n)) {
-            throw ForgeException.invalidArgument("Argument '" + name + "' must be a number");
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
         }
-        return Optional.of(n.intValue());
+        double asDouble = n.doubleValue();
+        long asLong = n.longValue();
+        if (!Double.isFinite(asDouble) || asDouble != asLong
+                || asLong < Integer.MIN_VALUE || asLong > Integer.MAX_VALUE) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be a 32-bit integer");
+        }
+        return Optional.of((int) asLong);
+    }
+
+    public Optional<Long> longInteger(String name) {
+        Object value = values.get(name);
+        if (value == null) {
+            return Optional.empty();
+        }
+        if (!(value instanceof Number n)) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
+        }
+        double asDouble = n.doubleValue();
+        long asLong = n.longValue();
+        if (!Double.isFinite(asDouble) || asDouble != asLong) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
+        }
+        return Optional.of(asLong);
+    }
+
+    public long longInteger(String name, long fallback) {
+        return longInteger(name).orElse(fallback);
     }
 
     public int integer(String name, int fallback) {
@@ -111,7 +137,7 @@ public record Args(Map<String, Object> values) {
         return new Args((Map<String, Object>) m);
     }
 
-    /** The raw value, for the rare handler that accepts free-form structured data. */
+
     public Object raw(String name) {
         return values.get(name);
     }

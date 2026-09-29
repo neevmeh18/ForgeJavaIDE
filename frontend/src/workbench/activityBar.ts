@@ -2,13 +2,13 @@ import type { WorkbenchContext } from '../forge/context';
 import type { ViewContribution } from '../forge/protocol';
 import { clear, el, icon } from './dom';
 
-/**
- * The narrow strip of view switchers on the left.
- *
- * <p>Its contents come from the backend's contribution registry, so a view an extension adds
- * appears here with no frontend change. Each button executes `workbench.showView`, keeping even
- * this piece of chrome on the command path.
- */
+
+
+
+
+
+
+
 export class ActivityBar {
   readonly element = el('nav', { class: 'activity-bar', 'aria-label': 'Views' });
   private buttons = new Map<string, HTMLButtonElement>();

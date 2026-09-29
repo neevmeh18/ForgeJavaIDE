@@ -5,16 +5,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Structured logging.
- *
- * <p>A thin layer over {@link System.Logger} rather than a logging framework dependency: the
- * framework only needs levelled messages plus a small set of correlation fields
- * (workspaceId, userId, sessionId, commandId, extensionId).
- *
- * <p>Secrets never reach the log. Fields whose names look sensitive are redacted centrally
- * here, so a careless call site cannot leak a token by accident.
- */
+
+
+
+
+
+
+
+
+
+
 public final class Log {
 
     private static final Set<String> REDACTED = Set.of(
@@ -33,13 +33,13 @@ public final class Log {
         return new Log(System.getLogger(owner.getName()), Map.of());
     }
 
-    /** Returns a logger that adds {@code key=value} to every message it emits. */
+
     public Log with(String key, Object value) {
         if (value == null) {
             return this;
         }
         Map<String, String> merged = new LinkedHashMap<>(context);
-        merged.put(key, redact(key, String.valueOf(value)));
+        merged.put(sanitize(key), redact(key, sanitize(String.valueOf(value))));
         return new Log(delegate, Map.copyOf(merged));
     }
 
@@ -69,7 +69,13 @@ public final class Log {
         delegate.log(Logger.Level.ERROR, format(message), t);
     }
 
+    private static String sanitize(String value) {
+        String bounded = value.length() > 2048 ? value.substring(0, 2048) : value;
+        return bounded.replaceAll("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]", "?");
+    }
+
     private String format(String message) {
+        message = sanitize(message);
         if (context.isEmpty()) {
             return message;
         }

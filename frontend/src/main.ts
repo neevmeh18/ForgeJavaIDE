@@ -3,13 +3,13 @@ import { ForgeClient } from './forge/client';
 import { showLogin } from './workbench/login';
 import { Workbench } from './workbench/workbench';
 
-/**
- * Entry point: authenticate, then build the workbench.
- *
- * <p>Nothing about the IDE is decided here. The workbench asks the backend what commands,
- * menus, shortcuts and views exist and renders those — which is what lets one frontend bundle
- * serve different IDE products built on the same framework.
- */
+
+
+
+
+
+
+
 const root = document.getElementById('workbench');
 if (!root) {
   throw new Error('Missing #workbench container');

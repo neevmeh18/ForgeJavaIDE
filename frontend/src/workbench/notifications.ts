@@ -1,12 +1,12 @@
 import type { NotificationKind } from '../forge/context';
 import { clear, el } from './dom';
 
-/**
- * Transient messages.
- *
- * <p>Errors reaching here are already structured: the backend sends a code and a safe message,
- * never a stack trace, so the workbench can show exactly what it was given.
- */
+
+
+
+
+
+
 export class Notifications {
   readonly element = el('div', { class: 'notifications', role: 'status', 'aria-live': 'polite' });
 

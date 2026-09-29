@@ -4,17 +4,17 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
-import dev.forge.debug.DebugTypes.DebugConfiguration;
+import dev.forge.core.query.QueryDescriptor;
+import dev.forge.debug.DebugConfiguration;
 import java.util.Optional;
 
-/**
- * {@code debug.*} commands and queries.
- *
- * <p>{@code debug.stop} and the stepping commands carry a real availability condition — they
- * are meaningless without a live session. The frontend uses it to disable buttons; the executor
- * enforces it, because a disabled button is a suggestion and the backend is the authority.
- */
+
+
+
+
+
+
+
 public final class DebugCommands {
 
     private final DebugService debug;
@@ -24,13 +24,13 @@ public final class DebugCommands {
     }
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
-        CommandDescriptor.Availability requiresSession = ctx ->
+        dev.forge.core.command.Availability requiresSession = ctx ->
                 debug.hasActiveSession(ctx.requireWorkspace())
                         ? Optional.empty()
                         : Optional.of("No active debug session");
 
         commands.register(
-                CommandDescriptor.of("debug.start", "Debug", "Start Debugging")
+                CommandDescriptor.of("debug.start", "Debug", "Start Debugging") .withArguments(new dev.forge.core.command.Argument("type", "string", "type"))
                         .describedAs("Starts a debug session using a registered adapter")
                         .workspaceScoped().asSensitive(),
                 ctx -> debug.start(ctx.requireWorkspace(), new DebugConfiguration(
@@ -40,7 +40,7 @@ public final class DebugCommands {
                         ctx.args().nested("options").values())));
 
         commands.register(
-                CommandDescriptor.of("debug.stop", "Debug", "Stop Debugging")
+                CommandDescriptor.of("debug.stop", "Debug", "Stop Debugging") .withArguments(new dev.forge.core.command.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().asSensitive().availableWhen(requiresSession),
                 ctx -> {
                     debug.stop(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace());
@@ -48,7 +48,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.continue", "Debug", "Continue")
+                CommandDescriptor.of("debug.continue", "Debug", "Continue") .withArguments(new dev.forge.core.command.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
                     debug.resume(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace(),
@@ -57,7 +57,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.pause", "Debug", "Pause")
+                CommandDescriptor.of("debug.pause", "Debug", "Pause") .withArguments(new dev.forge.core.command.Argument("debugSessionId", "string", "debugSessionId"))
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
                     debug.pause(ctx.args().debugSessionId("debugSessionId"), ctx.requireWorkspace(),
@@ -66,7 +66,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.step", "Debug", "Step")
+                CommandDescriptor.of("debug.step", "Debug", "Step") .withArguments(new dev.forge.core.command.Argument("debugSessionId", "string", "debugSessionId"))
                         .describedAs("Steps over, into or out of the current statement")
                         .workspaceScoped().availableWhen(requiresSession),
                 ctx -> {
@@ -76,7 +76,7 @@ public final class DebugCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("debug.toggleBreakpoint", "Debug", "Toggle Breakpoint").workspaceScoped(),
+                CommandDescriptor.of("debug.toggleBreakpoint", "Debug", "Toggle Breakpoint") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"), new dev.forge.core.command.Argument("line", "number", "line")).workspaceScoped(),
                 ctx -> debug.toggleBreakpoint(ctx.requireWorkspace(), ctx.args().requiredString("path"),
                         ctx.args().integer("line", 1), ctx.args().string("condition").orElse(null)));
 
@@ -102,7 +102,7 @@ public final class DebugCommands {
                 QueryDescriptor.of("debug.adapters", "Debug adapter types available"),
                 (ctx, args) -> debug.adapterTypes());
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("f5", "debug.start", null));
-        contributions.addView(ContributionRegistry.View.of("debug", "Run and Debug", "sidebar", "bug", 40));
+        contributions.addKeybinding(dev.forge.core.contrib.Keybinding.of("f5", "workbench.startDebug", null));
+        contributions.addView(dev.forge.core.contrib.View.of("debug", "Run and Debug", "sidebar", "bug", 40));
     }
 }

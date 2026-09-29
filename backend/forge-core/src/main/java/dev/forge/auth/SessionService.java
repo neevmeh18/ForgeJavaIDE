@@ -2,7 +2,7 @@ package dev.forge.auth;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.SessionId;
+import dev.forge.core.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -18,24 +18,23 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Issues, validates and revokes sessions.
- *
- * <p>Tokens are 256 bits from {@link SecureRandom} and are returned to the client exactly once.
- * Only a SHA-256 hash is retained, so a memory dump or a future persisted store never yields a
- * usable credential, and lookup by hash avoids comparing secrets at all.
- *
- * <p>Sessions expire on an idle timeout that slides on use and on a hard maximum lifetime, so a
- * forgotten browser tab cannot hold a session open indefinitely.
- */
-public final class SessionService implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+public final class SessionService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(SessionService.class);
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    /** Returned once, at login. The raw token exists only in this value and in the response. */
-    public record Issued(Session session, String token, Instant expiresAt) {
-    }
+
+
 
     private record Entry(Session session) {
     }
@@ -51,17 +50,20 @@ public final class SessionService implements Lifecycle.Component {
     private final EventBus events;
     private final Duration idleTimeout;
     private final Duration maxLifetime;
+    private final int maxSessions;
+    private final Object lock = new Object();
 
-    public SessionService(EventBus events, Duration idleTimeout, Duration maxLifetime) {
+    public SessionService(EventBus events, Duration idleTimeout, Duration maxLifetime, int maxSessions) {
         this.events = events;
         this.idleTimeout = idleTimeout;
         this.maxLifetime = maxLifetime;
+        this.maxSessions = maxSessions;
     }
 
     @Override
     public void start() {
-        // Without a sweep, an abandoned session would sit in memory until someone happened to
-        // present its token. The interval only has to be short relative to the idle timeout.
+
+
         sweeper.scheduleWithFixedDelay(this::evictExpired, 5, 5, java.util.concurrent.TimeUnit.MINUTES);
         log.with("idleTimeoutMinutes", idleTimeout.toMinutes()).info("Session service ready");
     }
@@ -79,66 +81,101 @@ public final class SessionService implements Lifecycle.Component {
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
         java.util.Arrays.fill(raw, (byte) 0);
 
-        Instant now = Instant.now();
-        Session session = new Session(SessionId.of(Ids.random("sess")), user.id(), now, now,
-                now.plus(idleTimeout), sanitize(clientInfo));
-        String hash = hash(token);
-        byTokenHash.put(hash, new Entry(session));
-        hashBySession.put(session.id(), hash);
+        Session session;
+        synchronized (lock) {
+            evictExpiredLocked(Instant.now());
+            if (byTokenHash.size() >= maxSessions) {
+                throw ForgeException.unavailable("Too many active sessions");
+            }
+            Instant now = Instant.now();
+            session = new Session(SessionId.of(Ids.random("sess")), user.id(), now, now,
+                    now.plus(idleTimeout), sanitize(clientInfo));
+            String hash = hash(token);
+            byTokenHash.put(hash, new Entry(session));
+            hashBySession.put(session.id(), hash);
+        }
 
         log.with("userId", user.id()).with("sessionId", session.id()).info("Session issued");
-        events.publish(new AuthEvents.SessionStarted(session.id(), user.id()));
+        events.publish(new dev.forge.auth.SessionStarted(session.id(), user.id()));
         return new Issued(session, token, session.expiresAt());
     }
 
-    /**
-     * Validates a bearer token. Returns empty for unknown, expired or revoked tokens — the
-     * caller must not be told which, and the transport reports a single {@code UNAUTHORIZED}.
-     */
+
+
+
+
     public Optional<Session> authenticate(String token) {
-        if (token == null || token.isBlank()) {
+        if (token == null || token.isBlank() || token.length() > 256) {
             return Optional.empty();
         }
         String hash = hash(token);
-        Entry entry = byTokenHash.get(hash);
-        if (entry == null) {
-            return Optional.empty();
+        synchronized (lock) {
+            Entry entry = byTokenHash.get(hash);
+            if (entry == null) {
+                return Optional.empty();
+            }
+            Instant now = Instant.now();
+            Session session = entry.session();
+            if (session.isExpired(now) || now.isAfter(session.createdAt().plus(maxLifetime))) {
+                revokeLocked(session.id(), "expired");
+                return Optional.empty();
+            }
+            if (!hash.equals(hashBySession.get(session.id()))) {
+                return Optional.empty();
+            }
+            Session refreshed = session.seen(now, now.plus(idleTimeout));
+            byTokenHash.put(hash, new Entry(refreshed));
+            return Optional.of(refreshed);
         }
-        Instant now = Instant.now();
-        Session session = entry.session();
-        if (session.isExpired(now) || now.isAfter(session.createdAt().plus(maxLifetime))) {
-            revoke(session.id(), "expired");
-            return Optional.empty();
-        }
-        Session refreshed = session.seen(now, now.plus(idleTimeout));
-        byTokenHash.put(hash, new Entry(refreshed));
-        return Optional.of(refreshed);
     }
 
     public Optional<Session> find(SessionId id) {
-        String hash = hashBySession.get(id);
-        return hash == null ? Optional.empty() : Optional.ofNullable(byTokenHash.get(hash)).map(Entry::session);
+        if (id == null) return Optional.empty();
+        synchronized (lock) {
+            String hash = hashBySession.get(id);
+            if (hash == null) return Optional.empty();
+            Entry entry = byTokenHash.get(hash);
+            if (entry == null) return Optional.empty();
+            Instant now = Instant.now();
+            Session session = entry.session();
+            if (session.isExpired(now) || now.isAfter(session.createdAt().plus(maxLifetime))) {
+                revokeLocked(id, "expired");
+                return Optional.empty();
+            }
+            return Optional.of(session);
+        }
     }
 
     public void revoke(SessionId id, String reason) {
+        synchronized (lock) {
+            revokeLocked(id, reason);
+        }
+    }
+
+    private void revokeLocked(SessionId id, String reason) {
         String hash = hashBySession.remove(id);
         if (hash == null) {
             return;
         }
         Entry entry = byTokenHash.remove(hash);
         if (entry != null) {
-            log.with("sessionId", id).with("reason", reason).info("Session revoked");
-            events.publish(new AuthEvents.SessionEnded(id, entry.session().userId(), reason));
+            log.with("sessionId", id).with("reason", sanitize(reason)).info("Session revoked");
+            events.publish(new dev.forge.auth.SessionEnded(id, entry.session().userId(), sanitize(reason)));
         }
     }
 
-    /** Drops expired sessions. Cheap enough to run on a timer from the application bootstrap. */
+
     public void evictExpired() {
-        Instant now = Instant.now();
-        List.copyOf(byTokenHash.entrySet()).forEach(entry -> {
-            Session session = entry.getValue().session();
+        synchronized (lock) {
+            evictExpiredLocked(Instant.now());
+        }
+    }
+
+    private void evictExpiredLocked(Instant now) {
+        List.copyOf(byTokenHash.values()).forEach(entry -> {
+            Session session = entry.session();
             if (session.isExpired(now) || now.isAfter(session.createdAt().plus(maxLifetime))) {
-                revoke(session.id(), "expired");
+                revokeLocked(session.id(), "expired");
             }
         });
     }
@@ -156,7 +193,7 @@ public final class SessionService implements Lifecycle.Component {
         }
     }
 
-    /** Client-supplied strings end up in logs; keep them short and free of control characters. */
+
     private static String sanitize(String clientInfo) {
         if (clientInfo == null) {
             return "";

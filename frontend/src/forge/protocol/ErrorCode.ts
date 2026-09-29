@@ -1,0 +1,10 @@
+export type ErrorCode =
+  | 'NOT_FOUND'
+  | 'INVALID_ARGUMENT'
+  | 'CONFLICT'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'UNAVAILABLE'
+  | 'UNSUPPORTED'
+  | 'CANCELLED'
+  | 'INTERNAL_FAILURE';

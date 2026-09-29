@@ -4,14 +4,14 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
+import dev.forge.core.query.QueryDescriptor;
 
-/**
- * {@code scm.*} commands and queries.
- *
- * <p>Network operations are commands because they are slow and cancellable; status and diffs
- * are queries because the source-control view reads them constantly.
- */
+
+
+
+
+
+
 public final class ScmCommands {
 
     private final SourceControlService scm;
@@ -22,7 +22,7 @@ public final class ScmCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("scm.stage", "Source Control", "Stage Changes")
+                CommandDescriptor.of("scm.stage", "Source Control", "Stage Changes") .withArguments(new dev.forge.core.command.Argument("paths", "array", "paths"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.stage(ctx.requireWorkspace(), ctx.args().strings("paths"));
@@ -30,7 +30,7 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.unstage", "Source Control", "Unstage Changes")
+                CommandDescriptor.of("scm.unstage", "Source Control", "Unstage Changes") .withArguments(new dev.forge.core.command.Argument("paths", "array", "paths"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.unstage(ctx.requireWorkspace(), ctx.args().strings("paths"));
@@ -38,7 +38,7 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.discard", "Source Control", "Discard Changes")
+                CommandDescriptor.of("scm.discard", "Source Control", "Discard Changes") .withArguments(new dev.forge.core.command.Argument("paths", "array", "paths"))
                         .describedAs("Throws away working-tree changes; not undoable")
                         .workspaceScoped().asSensitive(),
                 ctx -> {
@@ -47,13 +47,13 @@ public final class ScmCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("scm.commit", "Source Control", "Commit")
+                CommandDescriptor.of("scm.commit", "Source Control", "Commit") .withArguments(new dev.forge.core.command.Argument("message", "string", "message"))
                         .workspaceScoped().asSensitive(),
                 ctx -> scm.commit(ctx.requireWorkspace(), ctx.args().requiredString("message"),
                         ctx.args().bool("amend", false)));
 
         commands.register(
-                CommandDescriptor.of("scm.checkout", "Source Control", "Checkout Branch")
+                CommandDescriptor.of("scm.checkout", "Source Control", "Checkout Branch") .withArguments(new dev.forge.core.command.Argument("branch", "string", "branch"))
                         .workspaceScoped().asSensitive(),
                 ctx -> {
                     scm.checkout(ctx.requireWorkspace(), ctx.args().requiredString("branch"),
@@ -100,7 +100,7 @@ public final class ScmCommands {
                 (ctx, args) -> scm.history(ctx.requireWorkspace(), args.string("path").orElse(""),
                         args.integer("limit", 50)));
 
-        contributions.addView(ContributionRegistry.View.of(
+        contributions.addView(dev.forge.core.contrib.View.of(
                 "scm", "Source Control", "sidebar", "git-branch", 30));
     }
 }
