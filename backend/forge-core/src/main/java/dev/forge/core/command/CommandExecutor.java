@@ -182,11 +182,6 @@ public final class CommandExecutor implements dev.forge.core.Component {
 
 
     private Object invoke(CommandHandler handler, CommandContext ctx, CommandDescriptor descriptor) throws Exception {
-
-
-        if (descriptor.sensitive()) {
-            return handler.execute(ctx);
-        }
         List<CommandInterceptor> chain = registry.interceptors();
         CommandHandler composed = handler;
         for (int i = chain.size() - 1; i >= 0; i--) {

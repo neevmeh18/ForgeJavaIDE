@@ -63,7 +63,7 @@ export class ExtensionsView {
         });
         row.append(deactivate);
       }
-      if (extension.state === 'DISCOVERED' || extension.state === 'DEACTIVATED' || extension.state === 'FAILED') {
+      if (extension.state === 'DISCOVERED' || extension.state === 'DEACTIVATED') {
         const activate = el('button', { class: 'view-action', text: 'Activate' });
         activate.addEventListener('click', () => {
           void this.ctx.commands

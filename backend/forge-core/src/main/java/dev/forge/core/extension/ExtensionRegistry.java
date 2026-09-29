@@ -106,8 +106,7 @@ public final class ExtensionRegistry implements dev.forge.core.Component {
             throw ForgeException.notFound("Unknown extension: " + id);
         }
         synchronized (entry) {
-            if (entry.state != State.DISCOVERED && entry.state != State.DEACTIVATED
-                    && entry.state != State.FAILED) {
+            if (entry.state != State.DISCOVERED && entry.state != State.DEACTIVATED) {
                 return;
             }
 
