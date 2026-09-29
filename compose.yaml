@@ -1,6 +1,9 @@
 services:
   secret-init:
-    image: alpine:3.22
+    build:
+      context: .
+      dockerfile: Dockerfile.init
+    image: forge-secret-init:0.1.0
     restart: "no"
     command:
       - /bin/sh
@@ -16,14 +19,24 @@ services:
         if [ ! -s /terminal-client/password ]; then
           head -c 32 /dev/urandom | base64 | tr -d '\n' > /terminal-client/password
         fi
+        if [ ! -s /terminal-host/ssh_host_ed25519_key ]; then
+          ssh-keygen -q -t ed25519 -N '' -f /terminal-host/ssh_host_ed25519_key
+        fi
+        if [ ! -s /terminal-host/ssh_host_ed25519_key.pub ]; then
+          ssh-keygen -y -f /terminal-host/ssh_host_ed25519_key > /terminal-host/ssh_host_ed25519_key.pub
+        fi
         cp /terminal-client/password /terminal-server/password
-        chmod 0444 /root-secrets/mongo-root-password /app-secrets/mongo-app-password /terminal-client/password
-        chmod 0400 /terminal-server/password
+        printf '[forge-terminal]:2222 %s %s\n' "$$(awk '{print $$1}' /terminal-host/ssh_host_ed25519_key.pub)" "$$(awk '{print $$2}' /terminal-host/ssh_host_ed25519_key.pub)" > /terminal-known-hosts/known_hosts
+        chmod 0444 /root-secrets/mongo-root-password /app-secrets/mongo-app-password /terminal-client/password /terminal-known-hosts/known_hosts
+        chmod 0400 /terminal-server/password /terminal-host/ssh_host_ed25519_key
+        chmod 0444 /terminal-host/ssh_host_ed25519_key.pub
     volumes:
       - forge-root-secret:/root-secrets
       - forge-app-secret:/app-secrets
       - forge-terminal-client-secret:/terminal-client
       - forge-terminal-server-secret:/terminal-server
+      - forge-terminal-host-key:/terminal-host
+      - forge-terminal-known-hosts:/terminal-known-hosts
 
   mongodb:
     image: mongo:8.0
@@ -74,6 +87,7 @@ services:
     volumes:
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
       - forge-terminal-server-secret:/run/forge-terminal-server-secret:ro
+      - forge-terminal-host-key:/run/forge-terminal-host-key:ro
     security_opt:
       - no-new-privileges:true
     pids_limit: ${IDE_TERMINAL_PIDS_LIMIT:-256}
@@ -112,6 +126,7 @@ services:
       - forge-data:/data
       - forge-app-secret:/run/forge-app-secret:ro
       - forge-terminal-client-secret:/run/forge-terminal-client-secret:ro
+      - forge-terminal-known-hosts:/run/forge-terminal-known-hosts:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -134,3 +149,5 @@ volumes:
   forge-app-secret:
   forge-terminal-client-secret:
   forge-terminal-server-secret:
+  forge-terminal-host-key:
+  forge-terminal-known-hosts:

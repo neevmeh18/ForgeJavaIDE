@@ -25,6 +25,7 @@ public final class ProcessTerminalProvider implements TerminalProvider {
     private static final String TERMINAL_HOST = "forge-terminal";
     private static final String TERMINAL_PORT = "2222";
     private static final String TERMINAL_PASSWORD_FILE = "/run/forge-terminal-client-secret/password";
+    private static final String TERMINAL_KNOWN_HOSTS_FILE = "/run/forge-terminal-known-hosts/known_hosts";
 
     public enum ExecutionTarget {
         LOCAL, REMOTE
@@ -109,9 +110,11 @@ public final class ProcessTerminalProvider implements TerminalProvider {
         command.add("-p");
         command.add(TERMINAL_PORT);
         command.add("-o");
-        command.add("StrictHostKeyChecking=no");
+        command.add("StrictHostKeyChecking=yes");
         command.add("-o");
-        command.add("UserKnownHostsFile=/dev/null");
+        command.add("UserKnownHostsFile=" + TERMINAL_KNOWN_HOSTS_FILE);
+        command.add("-o");
+        command.add("HostKeyAlgorithms=ssh-ed25519");
         command.add("-o");
         command.add("LogLevel=ERROR");
         command.add("-o");
