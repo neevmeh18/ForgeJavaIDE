@@ -22,6 +22,10 @@ export class Explorer {
   private selected: string | null = null;
   private selectedIsDirectory = false;
 
+  // Used to prevent overlapping asynchronous refreshes from
+  // writing duplicate/stale directory entries into the tree.
+  private refreshGeneration = 0;
+
   constructor(private readonly ctx: WorkbenchContext) {
     const actions = el(
       'div',
@@ -30,12 +34,29 @@ export class Explorer {
       this.action('New Folder', () => this.promptCreate(true)),
       this.action('Refresh', () => void this.refresh()),
     );
-    this.element.append(el('div', { class: 'view-header' }, el('h2', { text: 'Explorer' }), actions), this.tree);
 
-    // Any change on disk — ours, another session's, or a build's — redraws the affected folder.
-    for (const type of ['file.created', 'file.deleted', 'file.moved']) {
+    this.element.append(
+      el(
+        'div',
+        { class: 'view-header' },
+        el('h2', { text: 'Explorer' }),
+        actions,
+      ),
+      this.tree,
+    );
+
+    // Any change on disk — ours, another session's, or a build's —
+    // redraws the file tree.
+    for (const type of [
+      'file.created',
+      'file.deleted',
+      'file.moved',
+      'file.saved',
+      'file.changed',
+    ]) {
       ctx.on(type, () => void this.refresh());
     }
+
     ctx.on('workspace.opened', () => {
       this.expanded.clear();
       void this.refresh();
@@ -43,6 +64,10 @@ export class Explorer {
   }
 
   resetWorkspace(): void {
+    // Prevent an old in-flight refresh from restoring the previous
+    // workspace after the tree has been reset.
+    ++this.refreshGeneration;
+
     this.selected = null;
     this.selectedIsDirectory = false;
     this.expanded.clear();
@@ -51,146 +76,308 @@ export class Explorer {
   }
 
   setContextMenu(items: MenuItem[]): void {
-    this.contextMenuItems = items.filter((item) => item.menu === 'menu.explorer.context');
+    this.contextMenuItems = items.filter(
+      (item) => item.menu === 'menu.explorer.context',
+    );
   }
 
   async refresh(): Promise<void> {
+    // Every refresh gets a generation number.
+    // Only the newest generation is allowed to update the visible tree.
+    const generation = ++this.refreshGeneration;
+
     if (!this.ctx.client.currentWorkspace) {
       clear(this.tree);
-      this.tree.append(el('p', { class: 'view-empty', text: 'No workspace open' }));
+      this.tree.append(
+        el('p', {
+          class: 'view-empty',
+          text: 'No workspace open',
+        }),
+      );
       return;
     }
-    clear(this.tree);
-    await this.renderDirectory('', this.tree, 0);
+
+    /*
+     * Do not render directly into this.tree.
+     *
+     * file.list is asynchronous, so another file event can start another
+     * refresh while this refresh is waiting for the backend. Rendering into
+     * a detached element keeps concurrent refreshes isolated.
+     */
+    const nextTree = el('div');
+
+    await this.renderDirectory('', nextTree, 0);
+
+    /*
+     * A newer refresh started while this one was running.
+     * Its result is more recent, so discard this tree.
+     */
+    if (generation !== this.refreshGeneration) {
+      return;
+    }
+
+    /*
+     * Commit the complete tree in one operation.
+     * This prevents multiple refreshes from appending duplicate rows.
+     */
+    this.tree.replaceChildren(...nextTree.childNodes);
   }
 
-  private async renderDirectory(path: string, parent: HTMLElement, depth: number): Promise<void> {
+  private async renderDirectory(
+    path: string,
+    parent: HTMLElement,
+    depth: number,
+  ): Promise<void> {
     let entries: DirEntry[];
+
     try {
-      entries = await this.ctx.client.query<DirEntry[]>('file.list', { path });
+      entries = await this.ctx.client.query<DirEntry[]>(
+        'file.list',
+        { path },
+      );
     } catch (error) {
-      parent.append(el('p', { class: 'view-empty', text: describe(error) }));
+      parent.append(
+        el('p', {
+          class: 'view-empty',
+          text: describe(error),
+        }),
+      );
       return;
     }
+
     for (const entry of entries) {
       parent.append(this.renderEntry(entry, depth));
+
       if (entry.directory && this.expanded.has(entry.path)) {
-        const children = el('div', { class: 'tree-children' });
+        const children = el('div', {
+          class: 'tree-children',
+        });
+
         parent.append(children);
-        await this.renderDirectory(entry.path, children, depth + 1);
+
+        await this.renderDirectory(
+          entry.path,
+          children,
+          depth + 1,
+        );
       }
     }
   }
 
-  private renderEntry(entry: DirEntry, depth: number): HTMLElement {
+  private renderEntry(
+    entry: DirEntry,
+    depth: number,
+  ): HTMLElement {
     const row = el('div', {
       class: `tree-row${this.selected === entry.path ? ' selected' : ''}`,
       role: 'treeitem',
       style: `padding-left:${8 + depth * 14}px`,
       title: entry.path,
     });
+
     if (entry.directory) {
       row.append(
         el('span', {
-          class: this.expanded.has(entry.path) ? 'twisty open' : 'twisty',
+          class: this.expanded.has(entry.path)
+            ? 'twisty open'
+            : 'twisty',
           text: '›',
           'aria-hidden': 'true',
         }),
       );
     } else {
-      row.append(el('span', { class: 'twisty', text: ' ', 'aria-hidden': 'true' }));
+      row.append(
+        el('span', {
+          class: 'twisty',
+          text: ' ',
+          'aria-hidden': 'true',
+        }),
+      );
     }
-    row.append(fileIcon(entry.directory), el('span', { class: 'tree-label', text: entry.name }));
+
+    row.append(
+      fileIcon(entry.directory),
+      el('span', {
+        class: 'tree-label',
+        text: entry.name,
+      }),
+    );
 
     row.addEventListener('click', () => {
       this.selected = entry.path;
       this.selectedIsDirectory = entry.directory;
+
       if (entry.directory) {
         if (this.expanded.has(entry.path)) {
           this.expanded.delete(entry.path);
         } else {
           this.expanded.add(entry.path);
         }
+
         void this.refresh();
       } else {
         void this.ctx.openFile(entry.path);
       }
     });
+
     row.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+
       this.selected = entry.path;
       this.selectedIsDirectory = entry.directory;
+
       this.showContextMenu(event, entry);
     });
+
     return row;
   }
 
-  private showContextMenu(event: MouseEvent, entry: DirEntry): void {
+  private showContextMenu(
+    event: MouseEvent,
+    entry: DirEntry,
+  ): void {
     document.querySelector('.context-menu')?.remove();
+
     const menu = el('div', {
       class: 'context-menu',
       style: `left:${event.clientX}px; top:${event.clientY}px`,
     });
+
     for (const item of this.contextMenuItems) {
-      const button = el('button', { class: 'context-item', text: item.title });
+      const button = el('button', {
+        class: 'context-item',
+        text: item.title,
+      });
+
       button.addEventListener('click', () => {
         menu.remove();
-        void this.runContextCommand(item.command, entry);
+        void this.runContextCommand(
+          item.command,
+          entry,
+        );
       });
+
       menu.append(button);
     }
+
     document.body.append(menu);
-    // Dismiss only when the pointer is outside the menu.  The old document-level
-    // mousedown handler removed the menu before a context item's `click` event
-    // could fire, which made actions such as Rename and Delete appear broken.
+
+    // Dismiss only when the pointer is outside the menu.
     const dismiss = (dismissEvent: MouseEvent) => {
-      if (menu.contains(dismissEvent.target as Node)) return;
+      if (menu.contains(dismissEvent.target as Node)) {
+        return;
+      }
+
       menu.remove();
-      document.removeEventListener('mousedown', dismiss);
+      document.removeEventListener(
+        'mousedown',
+        dismiss,
+      );
     };
-    setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
+
+    setTimeout(
+      () => document.addEventListener(
+        'mousedown',
+        dismiss,
+      ),
+      0,
+    );
   }
 
-  private async runContextCommand(commandId: string, entry: DirEntry): Promise<void> {
+  private async runContextCommand(
+    commandId: string,
+    entry: DirEntry,
+  ): Promise<void> {
     try {
       if (commandId === 'file.rename') {
-        const newName = window.prompt('New name', entry.name);
+        const newName = window.prompt(
+          'New name',
+          entry.name,
+        );
+
         if (!newName || newName === entry.name) {
           return;
         }
-        await this.ctx.commands.execute(commandId, { path: entry.path, newName });
+
+        await this.ctx.commands.execute(
+          commandId,
+          {
+            path: entry.path,
+            newName,
+          },
+        );
       } else if (commandId === 'file.delete') {
         if (!window.confirm(`Delete ${entry.path}?`)) {
           return;
         }
-        await this.ctx.commands.execute(commandId, { path: entry.path, recursive: entry.directory });
+
+        await this.ctx.commands.execute(
+          commandId,
+          {
+            path: entry.path,
+            recursive: entry.directory,
+          },
+        );
       } else {
-        await this.ctx.commands.execute(commandId, { path: entry.path });
+        await this.ctx.commands.execute(
+          commandId,
+          {
+            path: entry.path,
+          },
+        );
       }
+
       await this.refresh();
     } catch (error) {
-      this.ctx.notify('error', describe(error));
+      this.ctx.notify(
+        'error',
+        describe(error),
+      );
     }
   }
 
-  private async promptCreate(directory: boolean): Promise<void> {
+  private async promptCreate(
+    directory: boolean,
+  ): Promise<void> {
     const base = this.selectedDirectory();
-    const name = window.prompt(directory ? 'New folder name' : 'New file name', '');
+
+    const name = window.prompt(
+      directory
+        ? 'New folder name'
+        : 'New file name',
+      '',
+    );
+
     if (!name) {
       return;
     }
-    const path = base ? `${base}/${name}` : name;
+
+    const path = base
+      ? `${base}/${name}`
+      : name;
+
     try {
-      await this.ctx.commands.execute(directory ? 'file.createDirectory' : 'file.create', { path });
+      await this.ctx.commands.execute(
+        directory
+          ? 'file.createDirectory'
+          : 'file.create',
+        { path },
+      );
+
       if (base) {
         this.expanded.add(base);
       }
+
       await this.refresh();
+
       if (!directory) {
         await this.ctx.openFile(path);
       }
     } catch (error) {
-      this.ctx.notify('error', describe(error));
+      this.ctx.notify(
+        'error',
+        describe(error),
+      );
     }
   }
 
@@ -198,14 +385,33 @@ export class Explorer {
     if (!this.selected) {
       return '';
     }
-    if (this.selectedIsDirectory) return this.selected;
+
+    if (this.selectedIsDirectory) {
+      return this.selected;
+    }
+
     const slash = this.selected.lastIndexOf('/');
-    return slash < 0 ? '' : this.selected.slice(0, slash);
+
+    return slash < 0
+      ? ''
+      : this.selected.slice(0, slash);
   }
 
-  private action(label: string, handler: () => void): HTMLButtonElement {
-    const button = el('button', { class: 'view-action', title: label, text: shortLabel(label) });
-    button.addEventListener('click', handler);
+  private action(
+    label: string,
+    handler: () => void,
+  ): HTMLButtonElement {
+    const button = el('button', {
+      class: 'view-action',
+      title: label,
+      text: shortLabel(label),
+    });
+
+    button.addEventListener(
+      'click',
+      handler,
+    );
+
     return button;
   }
 }
@@ -214,8 +420,10 @@ function shortLabel(label: string): string {
   if (label === 'New File') {
     return '＋';
   }
+
   if (label === 'New Folder') {
     return '🗀';
   }
+
   return '⟳';
 }
