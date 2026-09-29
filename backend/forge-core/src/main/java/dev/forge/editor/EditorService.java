@@ -2,9 +2,9 @@ package dev.forge.editor;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.DocumentId;
-import dev.forge.core.Ids.SessionId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.DocumentId;
+import dev.forge.core.SessionId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.event.EventBus;
 import dev.forge.filesystem.FileEvents;
@@ -17,10 +17,10 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
-/** Open documents and their shared, versioned buffers. */
-public final class EditorService implements Lifecycle.Component {
 
-    public record OpenDocument(Document document, String text) { }
+public final class EditorService implements dev.forge.core.Component {
+
+
 
     private static final int MAX_OPEN_DOCUMENTS = 256;
     private static final long MAX_BUFFER_CHARS = 32L * 1024 * 1024;
@@ -56,9 +56,9 @@ public final class EditorService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceEvents.WorkspaceClosed.class,
+        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceClosed.class,
                 event -> closeAffected(event.workspaceId(), "")));
-        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceEvents.SessionDetached.class, event -> {
+        subscriptions.add(events.subscribe(dev.forge.workspace.SessionDetached.class, event -> {
             for (Buffer buffer : affected(event.workspaceId(), "")) {
                 synchronized (buffer) {
                     buffer.viewers.remove(event.sessionId());
@@ -66,19 +66,19 @@ public final class EditorService implements Lifecycle.Component {
                 }
             }
         }));
-        subscriptions.add(events.subscribe(dev.forge.scm.ScmEvents.BranchChanged.class, event -> {
+        subscriptions.add(events.subscribe(dev.forge.scm.BranchChanged.class, event -> {
             for (Buffer buffer : affected(event.workspaceId(), "")) {
                 if (!files.exists(Resource.of(event.workspaceId(), buffer.document.path()))) closeAll(buffer.document);
                 else refreshCleanBuffers(event.workspaceId(), buffer.document.path());
             }
         }));
-        subscriptions.add(events.subscribe(FileEvents.FileChanged.class,
+        subscriptions.add(events.subscribe(dev.forge.filesystem.FileChanged.class,
                 event -> refreshCleanBuffers(event.workspaceId(), event.path())));
-        subscriptions.add(events.subscribe(FileEvents.FileSaved.class,
+        subscriptions.add(events.subscribe(dev.forge.filesystem.FileSaved.class,
                 event -> refreshCleanBuffers(event.workspaceId(), event.path())));
-        subscriptions.add(events.subscribe(FileEvents.FileDeleted.class,
+        subscriptions.add(events.subscribe(dev.forge.filesystem.FileDeleted.class,
                 event -> closeAffected(event.workspaceId(), event.path())));
-        subscriptions.add(events.subscribe(FileEvents.FileMoved.class,
+        subscriptions.add(events.subscribe(dev.forge.filesystem.FileMoved.class,
                 event -> moveAffected(event.workspaceId(), event.from(), event.to())));
     }
 
@@ -99,7 +99,7 @@ public final class EditorService implements Lifecycle.Component {
                     if (buffers.size() >= MAX_OPEN_DOCUMENTS) {
                         throw ForgeException.unavailable("Too many open documents");
                     }
-                    FileService.FileContent content = files.readText(resource);
+                    dev.forge.filesystem.FileContent content = files.readText(resource);
                     ensureBufferBudget(content.text().length(), null);
                     Document document = new Document(DocumentId.of(Ids.random("doc")), resource.workspace(),
                             resource.path(), Document.languageFor(resource.path()), 1, false);
@@ -112,7 +112,7 @@ public final class EditorService implements Lifecycle.Component {
         if (session != null) {
             existing.viewers.add(session);
         }
-        events.publish(new EditorEvents.EditorOpened(resource.workspace(), session,
+        events.publish(new dev.forge.editor.EditorOpened(resource.workspace(), session,
                 existing.document.id(), resource.path()));
         return new OpenDocument(existing.document, existing.text);
     }
@@ -145,13 +145,13 @@ public final class EditorService implements Lifecycle.Component {
                 buffer.document = buffer.document.changed(buffer.document.version() + 1);
                 publishChanged(buffer, !wasDirty);
             }
-            FileService.SaveResult saved = files.writeText(
+            dev.forge.filesystem.SaveResult saved = files.writeText(
                     Resource.of(workspace, buffer.document.path()), buffer.text, buffer.sourceModifiedAt, buffer.sourceRevision);
             buffer.sourceModifiedAt = saved.modifiedAt();
             buffer.sourceRevision = FileService.revision(buffer.text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (buffer.document.dirty()) {
                 buffer.document = buffer.document.saved();
-                events.publish(new EditorEvents.DirtyStateChanged(workspace, id, false));
+                events.publish(new dev.forge.editor.DirtyStateChanged(workspace, id, false));
             }
             return new OpenDocument(buffer.document, buffer.text);
         }
@@ -192,7 +192,7 @@ public final class EditorService implements Lifecycle.Component {
         if (session != null) {
             buffer.viewers.remove(session);
         }
-        events.publish(new EditorEvents.EditorClosed(buffer.document.workspaceId(), session, id,
+        events.publish(new dev.forge.editor.EditorClosed(buffer.document.workspaceId(), session, id,
                 buffer.document.path(), buffer.document.languageId()));
         if (buffer.viewers.isEmpty()) {
             discard(buffer.document);
@@ -211,10 +211,10 @@ public final class EditorService implements Lifecycle.Component {
 
     private void publishChanged(Buffer buffer, boolean becameDirty) {
         Document document = buffer.document;
-        events.publish(new EditorEvents.DocumentChanged(document.workspaceId(), document.id(),
+        events.publish(new dev.forge.editor.DocumentChanged(document.workspaceId(), document.id(),
                 document.path(), document.version()));
         if (becameDirty) {
-            events.publish(new EditorEvents.DirtyStateChanged(document.workspaceId(), document.id(), true));
+            events.publish(new dev.forge.editor.DirtyStateChanged(document.workspaceId(), document.id(), true));
         }
         changeListeners.forEach(listener -> listener.accept(document));
     }
@@ -226,7 +226,7 @@ public final class EditorService implements Lifecycle.Component {
                     return;
                 }
                 try {
-                    FileService.FileContent content = files.readText(Resource.of(workspace, path));
+                    dev.forge.filesystem.FileContent content = files.readText(Resource.of(workspace, path));
                     if (content.modifiedAt() == buffer.sourceModifiedAt && content.text().equals(buffer.text)) {
                         return;
                     }
@@ -238,7 +238,7 @@ public final class EditorService implements Lifecycle.Component {
                             Document.languageFor(path), buffer.document.version() + 1, false);
                     publishChanged(buffer, false);
                 } catch (RuntimeException ignored) {
-                    // A delete/move event will dispose the buffer if the file disappeared.
+
                 }
             }
         });
@@ -287,7 +287,7 @@ public final class EditorService implements Lifecycle.Component {
     }
 
     private void closeAll(Document document) {
-        events.publish(new EditorEvents.EditorClosed(document.workspaceId(), null, document.id(),
+        events.publish(new dev.forge.editor.EditorClosed(document.workspaceId(), null, document.id(),
                 document.path(), document.languageId()));
         discard(document);
     }

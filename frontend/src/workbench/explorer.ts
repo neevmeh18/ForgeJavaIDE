@@ -3,16 +3,16 @@ import type { WorkbenchContext } from '../forge/context';
 import type { DirEntry, MenuItem } from '../forge/protocol';
 import { clear, el, fileIcon } from './dom';
 
-/**
- * The file tree.
- *
- * <p>Children are fetched per directory with the `file.list` query, never by walking the tree in
- * the browser: a workspace may be large, remote, or both, and the backend is the only place that
- * can answer cheaply. The view keeps expansion state and nothing else.
- *
- * <p>The context menu is built from contributed `menu.explorer.context` items, so an extension's
- * file action appears here automatically.
- */
+
+
+
+
+
+
+
+
+
+
 export class Explorer {
   readonly element = el('div', { class: 'view explorer' });
 
@@ -32,7 +32,7 @@ export class Explorer {
     );
     this.element.append(el('div', { class: 'view-header' }, el('h2', { text: 'Explorer' }), actions), this.tree);
 
-    // Any change on disk — ours, another session's, or a build's — redraws the affected folder.
+
     for (const type of ['file.created', 'file.deleted', 'file.moved']) {
       ctx.on(type, () => void this.refresh());
     }
@@ -140,9 +140,9 @@ export class Explorer {
       menu.append(button);
     }
     document.body.append(menu);
-    // Dismiss only when the pointer is outside the menu.  The old document-level
-    // mousedown handler removed the menu before a context item's `click` event
-    // could fire, which made actions such as Rename and Delete appear broken.
+
+
+
     const dismiss = (dismissEvent: MouseEvent) => {
       if (menu.contains(dismissEvent.target as Node)) return;
       menu.remove();

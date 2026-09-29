@@ -3,13 +3,13 @@ import type { ScmChange, ScmStatus } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * The source-control view.
- *
- * <p>Written entirely against the generic `scm.*` commands and queries — there is no mention of
- * Git here. A different provider backing the same commands would render identically, which is
- * the point of keeping Git-specific behaviour inside its provider.
- */
+
+
+
+
+
+
+
 export class ScmView {
   readonly element = el('div', { class: 'view scm-view' });
 

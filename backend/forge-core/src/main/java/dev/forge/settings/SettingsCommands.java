@@ -5,10 +5,10 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
+import dev.forge.core.query.QueryDescriptor;
 import java.util.Locale;
 
-/** {@code settings.*} commands and queries. */
+
 public final class SettingsCommands {
 
     private final SettingsService settings;
@@ -19,7 +19,7 @@ public final class SettingsCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("settings.set", "Settings", "Change Setting") .withArguments(new CommandDescriptor.Argument("key", "string", "key"), new CommandDescriptor.Argument("value", "json", "value"))
+                CommandDescriptor.of("settings.set", "Settings", "Change Setting") .withArguments(new dev.forge.core.command.Argument("key", "string", "key"), new dev.forge.core.command.Argument("value", "json", "value"))
                         .describedAs("Writes a setting into the user or workspace layer"),
                 ctx -> settings.set(
                         ctx.args().requiredString("key"),
@@ -36,13 +36,13 @@ public final class SettingsCommands {
                 QueryDescriptor.of("settings.definitions", "Declared settings and their types"),
                 (ctx, args) -> settings.definitions());
 
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
                 ContributionRegistry.MENU_VIEW, "workbench.view.settings", "Settings", "view", 90));
     }
 
-    private static Settings.Layer layer(String raw) {
+    private static dev.forge.settings.Layer layer(String raw) {
         try {
-            return Settings.Layer.valueOf(raw.toUpperCase(Locale.ROOT));
+            return dev.forge.settings.Layer.valueOf(raw.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw ForgeException.invalidArgument("Unknown settings layer: " + raw);
         }

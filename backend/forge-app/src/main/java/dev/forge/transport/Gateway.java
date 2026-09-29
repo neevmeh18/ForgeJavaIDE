@@ -5,7 +5,7 @@ import dev.forge.auth.SessionService;
 import dev.forge.core.Args;
 import dev.forge.core.Cancellation;
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.RequestContext;
@@ -21,56 +21,36 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
 
-/**
- * The transport gateway: the single door from the outside world into the application.
- *
- * <p>Everything external — browser, desktop shell, CLI, an automation client, a future agent —
- * arrives here and is reduced to the same three things: run a command, run a query, subscribe to
- * events. There is no controller per feature and no HTTP endpoint that reaches into a service,
- * so application logic never learns who called it.
- *
- * <p>This class is also the only place that turns a bearer token into a
- * {@link RequestContext}. Nothing downstream reads a header.
- */
-public final class Gateway implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+public final class Gateway implements dev.forge.core.Component {
 
     private static final Log log = Log.of(Gateway.class);
 
-    /**
-     * A uniform result. {@code pending} means a long-running command is still going: the caller
-     * keeps the {@code executionId} and watches for {@code command.completed} on the event stream.
-     */
-    public record Result(boolean ok, Object value, ErrorView error, String executionId, boolean pending) {
 
-        static Result value(Object value, String executionId) {
-            return new Result(true, value, null, executionId, false);
-        }
 
-        static Result pending(String executionId) {
-            return new Result(true, null, null, executionId, true);
-        }
 
-        static Result failure(ForgeException failure, String executionId) {
-            return new Result(false, null, ErrorView.of(failure), executionId, false);
-        }
-    }
 
-    /** The client-facing shape of a failure. Never contains a stack trace. */
-    public record ErrorView(String code, String message, Map<String, String> details) {
-        static ErrorView of(ForgeException failure) {
-            String message = failure.code() == ForgeException.Code.INTERNAL_FAILURE
-                    ? "An internal error occurred"
-                    : failure.getMessage();
-            return new ErrorView(failure.code().name(), message, failure.details());
-        }
-    }
 
-    private record Outcome(dev.forge.core.Ids.SessionId owner, long expires, String json) { }
+
+
+
+
+    private record Outcome(dev.forge.core.SessionId owner, long expires, String json) { }
     private final java.util.LinkedHashMap<String, Outcome> outcomes = new java.util.LinkedHashMap<>();
     private final Json codec = new Json();
     private int outcomeChars;
 
-    private synchronized void retain(String id, dev.forge.core.Ids.SessionId owner, Result result) {
+    private synchronized void retain(String id, dev.forge.core.SessionId owner, Result result) {
         if (owner == null) return;
         String encoded = codec.write(result);
         if (encoded.length() > 2 * 1024 * 1024) encoded = codec.write(Result.failure(
@@ -112,7 +92,7 @@ public final class Gateway implements Lifecycle.Component {
 
     @Override
     public void start() {
-        // Executor is ready at construction time.
+
     }
 
     @Override
@@ -120,11 +100,11 @@ public final class Gateway implements Lifecycle.Component {
         queryWorkers.shutdownNow();
     }
 
-    /**
-     * Resolves a caller. An absent or invalid token yields an anonymous context rather than an
-     * error, because a few commands ({@code auth.login}) legitimately run without a session;
-     * the executor refuses everything else.
-     */
+
+
+
+
+
     public RequestContext contextFor(String bearerToken, String workspaceHeader, Cancellation cancellation) {
         Optional<Session> session = sessions.authenticate(bearerToken);
         WorkspaceId workspace = workspaceHeader == null || workspaceHeader.isBlank()
@@ -132,9 +112,9 @@ public final class Gateway implements Lifecycle.Component {
                 : WorkspaceId.of(workspaceHeader);
         return session
                 .map(active -> new RequestContext(active.userId(), active.id(), workspace,
-                        RequestContext.Origin.UI, cancellation.token()))
+                        dev.forge.core.Origin.UI, cancellation.token()))
                 .orElseGet(() -> new RequestContext(null, null, workspace,
-                        RequestContext.Origin.UI, cancellation.token()));
+                        dev.forge.core.Origin.UI, cancellation.token()));
     }
 
     public Result command(String id, Args args, boolean async, RequestContext ctx) {
@@ -156,8 +136,8 @@ public final class Gateway implements Lifecycle.Component {
             return Result.value(value, execution.id());
         } catch (TimeoutException e) {
             if ("auth.login".equals(id)) { execution.cancel(); return Result.failure(ForgeException.unavailable("Login timed out"), execution.id()); }
-            // Not a failure: the command is still running and will announce itself on the
-            // event stream. Cancellation stays possible through command.cancel.
+
+
             log.with("commandId", id).with("executionId", execution.id()).info("Command still running");
             return Result.pending(execution.id());
         } catch (InterruptedException e) {
@@ -196,7 +176,7 @@ public final class Gateway implements Lifecycle.Component {
             return Result.failure(ForgeException.cancelled("Query interrupted"), null);
         } catch (java.util.concurrent.ExecutionException e) {
             ForgeException failure = ForgeException.normalize(e);
-            if (failure.code() == ForgeException.Code.INTERNAL_FAILURE) {
+            if (failure.code() == dev.forge.core.Code.INTERNAL_FAILURE) {
                 log.with("queryId", id).error("Query failed", failure);
             }
             return Result.failure(failure, null);

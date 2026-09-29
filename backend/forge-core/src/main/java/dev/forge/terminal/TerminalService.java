@@ -2,8 +2,8 @@ package dev.forge.terminal;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.TerminalId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.TerminalId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -17,8 +17,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Bounded process/terminal lifecycle for one workspace. */
-public final class TerminalService implements Lifecycle.Component {
+
+public final class TerminalService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(TerminalService.class);
     private static final int MAX_TERMINALS_PER_WORKSPACE = 16;
@@ -27,7 +27,7 @@ public final class TerminalService implements Lifecycle.Component {
     private static final int MAX_EVENT_OUTPUT_CHARS_PER_SECOND = 256 * 1024;
     private static final int MAX_RETAINED_EXITED_PER_WORKSPACE = 32;
 
-    public record TerminalInfo(TerminalId id, WorkspaceId workspaceId, String title, String cwd, boolean alive) { }
+
 
     private static final class Entry {
         final TerminalSession session;
@@ -64,7 +64,7 @@ public final class TerminalService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        subscriptions.add(events.subscribe(WorkspaceEvents.WorkspaceClosed.class,
+        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceClosed.class,
                 event -> killAll(event.workspaceId())));
     }
 
@@ -105,7 +105,7 @@ public final class TerminalService implements Lifecycle.Component {
         }
         String cwd = Resource.of(workspace, requestedCwd == null ? "" : requestedCwd).path();
         TerminalId id = TerminalId.of(Ids.random("term"));
-        TerminalProvider.Spec spec = new TerminalProvider.Spec(workspace, id, executable, arguments,
+        dev.forge.terminal.Spec spec = new dev.forge.terminal.Spec(workspace, id, executable, arguments,
                 cwd, env, Math.clamp(columns, 20, 500), Math.clamp(rows, 5, 200));
         reserve(workspace);
         creating.add(id);
@@ -125,7 +125,7 @@ public final class TerminalService implements Lifecycle.Component {
                 onExit(id, workspace, earlyExit);
             } else {
                 log.with("workspaceId", workspace).with("terminalId", id).info("Terminal created");
-                events.publish(new TerminalEvents.TerminalCreated(workspace, id, info.title()));
+                events.publish(new dev.forge.terminal.TerminalCreated(workspace, id, info.title()));
             }
             return info;
         } catch (RuntimeException e) {
@@ -168,7 +168,7 @@ public final class TerminalService implements Lifecycle.Component {
         }
     }
 
-    /** One-shot exit status used to close the fast-process race in the task layer. */
+
     public java.util.OptionalInt consumeExitCode(TerminalId id) {
         Integer code = recentExitCodes.remove(id);
         return code == null ? java.util.OptionalInt.empty() : java.util.OptionalInt.of(code);
@@ -217,10 +217,10 @@ public final class TerminalService implements Lifecycle.Component {
             }
         }
         if (eventData != null && !eventData.isEmpty()) {
-            events.publish(new TerminalEvents.TerminalOutput(workspace, id, eventData));
+            events.publish(new dev.forge.terminal.TerminalOutput(workspace, id, eventData));
         }
         if (notice) {
-            events.publish(new TerminalEvents.TerminalOutput(workspace, id,
+            events.publish(new dev.forge.terminal.TerminalOutput(workspace, id,
                     "\n[Forge: terminal output throttled]\n"));
         }
     }
@@ -232,8 +232,8 @@ public final class TerminalService implements Lifecycle.Component {
             pendingExits.putIfAbsent(id, exitCode);
             return;
         }
-        // Keep exited sessions around briefly so task output remains visible. They no longer
-        // consume a process slot and are pruned to a small bounded history per workspace.
+
+
         if (entry.exitedAtNanos != 0) return;
         if (entry.exitedAtNanos == 0) {
             entry.exitedAtNanos = System.nanoTime();
@@ -246,7 +246,7 @@ public final class TerminalService implements Lifecycle.Component {
         }
         pruneExited(workspace);
         log.with("terminalId", id).with("exitCode", exitCode).debug("Terminal exited");
-        events.publish(new TerminalEvents.TerminalExited(workspace, id, exitCode));
+        events.publish(new dev.forge.terminal.TerminalExited(workspace, id, exitCode));
     }
 
     private void pruneExited(WorkspaceId workspace) {

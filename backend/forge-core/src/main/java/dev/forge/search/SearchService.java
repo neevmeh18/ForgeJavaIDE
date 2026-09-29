@@ -1,7 +1,7 @@
 package dev.forge.search;
 
 import dev.forge.core.Cancellation;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
 import dev.forge.filesystem.FileSystem;
 import dev.forge.filesystem.Resource;
@@ -17,23 +17,23 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-/**
- * Workspace-scale search.
- *
- * <p>Runs entirely in the backend against the {@link FileSystem} capability. A browser-side
- * recursive scan would be hopeless over a remote or containerised workspace and would pull the
- * whole tree across the wire; doing it here means the same code serves a local folder and a
- * cloud volume.
- *
- * <p>Every traversal is bounded — by result count, by file size, by skipped directories — and
- * polls the caller's {@link Cancellation.Token}, so an over-broad query costs a moment rather
- * than the process.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 public final class SearchService {
 
     private static final Log log = Log.of(SearchService.class);
 
-    /** Directories that are never worth walking and would dominate every result set. */
+
     private static final Set<String> SKIPPED = Set.of(
             ".git", ".hg", ".svn", "node_modules", "target", "build", "dist", "out",
             ".gradle", ".idea", ".vscode", "__pycache__", ".venv", "vendor");
@@ -42,34 +42,26 @@ public final class SearchService {
     private static final int MAX_REGEX_CHARS = 256;
     private static final int MAX_LITERAL_QUERY_CHARS = 1024;
 
-    public record FileMatch(String path, String name, int score) {
-    }
 
-    public record TextMatch(String path, int line, int column, String preview) {
-    }
 
-    public record TextSearchResult(List<TextMatch> matches, boolean truncated, int filesScanned) {
-    }
 
-    /** Symbol search is answered by language tooling; supplied at assembly time. */
-    @FunctionalInterface
-    public interface SymbolSource {
-        List<Object> symbols(WorkspaceId workspace, String query, Cancellation.Token cancellation);
 
-        SymbolSource NONE = (workspace, query, cancellation) -> List.of();
-    }
 
-    private final FileSystem.Locator locator;
+
+
+
+
+    private final dev.forge.filesystem.Locator locator;
     private final SymbolSource symbols;
     private final int maxVisitedEntries;
 
-    public SearchService(FileSystem.Locator locator, SymbolSource symbols, int maxVisitedEntries) {
+    public SearchService(dev.forge.filesystem.Locator locator, SymbolSource symbols, int maxVisitedEntries) {
         this.locator = locator;
         this.symbols = symbols == null ? SymbolSource.NONE : symbols;
         this.maxVisitedEntries = maxVisitedEntries;
     }
 
-    /** Filename search with subsequence matching, the behaviour a quick-open expects. */
+
     public List<FileMatch> findFiles(WorkspaceId workspace, String query, int limit, Cancellation.Token cancel) {
         if (query.length() > MAX_LITERAL_QUERY_CHARS) throw dev.forge.core.ForgeException.invalidArgument("Search query is too long");
         String needle = query.toLowerCase(Locale.ROOT);
@@ -91,7 +83,7 @@ public final class SearchService {
                 .toList();
     }
 
-    /** Full-text search. {@code regex} switches from literal to pattern matching. */
+
     public TextSearchResult findText(WorkspaceId workspace, String query, boolean regex, boolean caseSensitive,
                                      int limit, Cancellation.Token cancel) {
         Pattern pattern = compile(query, regex, caseSensitive);
@@ -121,13 +113,13 @@ public final class SearchService {
                             truncated[0] = true;
                             return false;
                         }
-                        // Java handles zero-length matches by advancing, but keep cancellation responsive.
+
                         cancel.throwIfCancelled();
                     }
                     line++;
                 }
             } catch (dev.forge.core.ForgeException e) {
-                if (e.code() == dev.forge.core.ForgeException.Code.CANCELLED || e.code() == dev.forge.core.ForgeException.Code.UNAVAILABLE) throw e;
+                if (e.code() == dev.forge.core.Code.CANCELLED || e.code() == dev.forge.core.Code.UNAVAILABLE) throw e;
                 log.with("path", entry.path()).debug("Skipped unreadable file during search");
             } catch (RuntimeException e) {
                 log.with("path", entry.path()).debug("Skipped unreadable file during search");
@@ -141,9 +133,9 @@ public final class SearchService {
         return symbols.symbols(workspace, query, cancel);
     }
 
-    /** Breadth-first traversal that honours cancellation and skips build output directories. */
+
     private void walk(WorkspaceId workspace, Cancellation.Token cancel,
-                      java.util.function.Predicate<FileSystem.Entry> visitor) {
+                      java.util.function.Predicate<dev.forge.filesystem.Entry> visitor) {
         FileSystem fs = locator.forWorkspace(workspace);
         Deque<String> queue = new ArrayDeque<>();
         queue.add(Resource.root(workspace).path());
@@ -153,13 +145,13 @@ public final class SearchService {
             cancel.throwIfCancelled();
             if (System.nanoTime() > deadline) throw dev.forge.core.ForgeException.unavailable("Search time budget exceeded");
             String directory = queue.poll();
-            List<FileSystem.Entry> entries;
+            List<dev.forge.filesystem.Entry> entries;
             try {
                 entries = fs.list(directory);
             } catch (RuntimeException e) {
                 continue;
             }
-            for (FileSystem.Entry entry : entries) {
+            for (dev.forge.filesystem.Entry entry : entries) {
                 cancel.throwIfCancelled();
                 if (++visited > maxVisitedEntries) {
                     throw dev.forge.core.ForgeException.unavailable("Search traversal limit exceeded");
@@ -177,7 +169,7 @@ public final class SearchService {
         }
     }
 
-    /** Matcher accesses are metered, including backtracking, without changing regex semantics. */
+
     private static final class Budget {
         final Cancellation.Token cancel;
         final long deadline = System.nanoTime() + 10_000_000_000L;
@@ -196,7 +188,7 @@ public final class SearchService {
         public String toString() { return value; }
     }
 
-    /** Subsequence score: consecutive and name-local matches rank above scattered path hits. */
+
     private static int score(String name, String path, String needle) {
         if (needle.isEmpty()) {
             return 1;

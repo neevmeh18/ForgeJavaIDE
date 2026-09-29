@@ -78,7 +78,7 @@ public class StorageRegressionTest {
             fs.write("c.txt", "third".getBytes());
             var next = editors.open(Resource.of(W, "c.txt"), S).document().id();
             editors.update(next, W, S, "dirty", 1);
-            events.publish(new WorkspaceEvents.SessionDetached(W, S));
+            events.publish(new dev.forge.workspace.SessionDetached(W, S));
             assertTrue(editors.documentsFor(W, S).isEmpty());
         } finally { editors.dispose(); }
     }
@@ -86,21 +86,21 @@ public class StorageRegressionTest {
     @Test public void watcherReportsExternalChangeAndDelete() throws Exception {
         Path root = temporary.newFolder().toPath(); var fs = fs(root);
         fs.write("a.txt", "first".getBytes());
-        BlockingQueue<dev.forge.filesystem.FileSystem.Change> changes = new LinkedBlockingQueue<>();
+        BlockingQueue<dev.forge.filesystem.Change> changes = new LinkedBlockingQueue<>();
         var watch = fs.watch("", true, changes::offer);
         try {
             Files.writeString(root.resolve("a.txt"), "second");
-            assertTrue(awaitKind(changes, dev.forge.filesystem.FileSystem.ChangeKind.CHANGED));
+            assertTrue(awaitKind(changes, dev.forge.filesystem.ChangeKind.CHANGED));
             Files.delete(root.resolve("a.txt"));
-            assertTrue(awaitKind(changes, dev.forge.filesystem.FileSystem.ChangeKind.DELETED));
+            assertTrue(awaitKind(changes, dev.forge.filesystem.ChangeKind.DELETED));
         } finally { watch.dispose(); }
     }
 
     @Test public void searchMultipleMatchesAndCancellation() throws Exception {
         var fs = fs(temporary.newFolder().toPath()); fs.write("a.txt", "foo foo foo\nbar".getBytes());
-        var search = new SearchService(w -> fs, SearchService.SymbolSource.NONE, 100);
+        var search = new SearchService(w -> fs, dev.forge.search.SymbolSource.NONE, 100);
         var result = search.findText(W, "foo", false, true, 20, Cancellation.none());
-        assertEquals(List.of(1, 5, 9), result.matches().stream().map(SearchService.TextMatch::column).toList());
+        assertEquals(List.of(1, 5, 9), result.matches().stream().map(dev.forge.search.TextMatch::column).toList());
         assertEquals(3, search.findText(W, "fo+", true, true, 20, Cancellation.none()).matches().size());
         Cancellation cancelled = new Cancellation(); cancelled.cancel();
         assertThrows(ForgeException.class, () -> search.findText(W, "foo", false, true, 20, cancelled.token()));
@@ -110,11 +110,11 @@ public class StorageRegressionTest {
         Path data = temporary.newFolder().toPath();
         FileStateStore store = new FileStateStore(data, 4096, 1024); EventBus events = new EventBus();
         SettingsService settings = new SettingsService(store, events);
-        settings.define(Settings.Definition.of("editor.fontSize", Settings.Type.NUMBER, 13, "Font"));
-        var user = UserId.of("user"); settings.set("editor.fontSize", 18, Settings.Layer.USER, user, W);
+        settings.define(dev.forge.settings.Definition.of("editor.fontSize", dev.forge.settings.Type.NUMBER, 13, "Font"));
+        var user = UserId.of("user"); settings.set("editor.fontSize", 18, dev.forge.settings.Layer.USER, user, W);
         assertEquals(18, ((Number) settings.resolve("editor.fontSize", user, W).value()).intValue());
-        assertThrows(ForgeException.class, () -> store.write(StateStore.Scope.USER, "user", Map.of("large", "x".repeat(2048))));
-        settings.set("editor.fontSize", null, Settings.Layer.USER, user, W);
+        assertThrows(ForgeException.class, () -> store.write(dev.forge.state.Scope.USER, "user", Map.of("large", "x".repeat(2048))));
+        settings.set("editor.fontSize", null, dev.forge.settings.Layer.USER, user, W);
         assertEquals(13, ((Number) settings.resolve("editor.fontSize", user, W).value()).intValue());
     }
 
@@ -143,7 +143,7 @@ public class StorageRegressionTest {
             List<Future<?>> updates = new ArrayList<>();
             for (String value : List.of("one", "two")) updates.add(pool.submit(() -> {
                 try { gate.await(); editors.update(id, W, S, value, 1); accepted.incrementAndGet(); }
-                catch (ForgeException expected) { assertEquals(ForgeException.Code.CONFLICT, expected.code()); }
+                catch (ForgeException expected) { assertEquals(dev.forge.core.Code.CONFLICT, expected.code()); }
                 catch (InterruptedException e) { throw new AssertionError(e); }
             }));
             gate.countDown(); for (var update : updates) update.get(2, TimeUnit.SECONDS);
@@ -151,8 +151,8 @@ public class StorageRegressionTest {
         } finally { editors.dispose(); }
     }
 
-    private boolean awaitKind(BlockingQueue<dev.forge.filesystem.FileSystem.Change> queue,
-                              dev.forge.filesystem.FileSystem.ChangeKind expected) throws Exception {
+    private boolean awaitKind(BlockingQueue<dev.forge.filesystem.Change> queue,
+                              dev.forge.filesystem.ChangeKind expected) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
             var change = queue.poll(100, TimeUnit.MILLISECONDS);

@@ -3,12 +3,12 @@ import type { ExtensionStatus, ResolvedSetting } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * Two small read-and-edit views that share a shape: list what the backend declares, let the
- * user act on one entry. Keeping them together is cheaper to read than two near-identical files.
- */
 
-/** Shows installed extensions, their lifecycle state, and why a failed one failed. */
+
+
+
+
+
 export class ExtensionsView {
   readonly element = el('div', { class: 'view extensions-view' });
 
@@ -78,13 +78,13 @@ export class ExtensionsView {
   }
 }
 
-/**
- * The settings editor.
- *
- * <p>Renders whatever `settings.definitions` declares — including settings contributed by an
- * extension — and writes through `settings.set`. Types, allowed values and which layer a value
- * came from are the backend's answers, so the UI cannot invent a setting or accept an invalid one.
- */
+
+
+
+
+
+
+
 export class SettingsView {
   readonly element = el('div', { class: 'view settings-view' });
 

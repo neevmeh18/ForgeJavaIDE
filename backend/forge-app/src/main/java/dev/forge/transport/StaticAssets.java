@@ -8,17 +8,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
-/**
- * Serves the built frontend from the backend.
- *
- * <p>One origin for the UI and the API means no CORS, no cookie sharing across ports and one
- * container to run — and it costs nothing architecturally, because the frontend is a static
- * bundle that talks to the same gateway any other client would.
- *
- * <p>Unknown paths fall back to {@code index.html} so the workbench can own its routing, but
- * only after the request has been resolved inside the web root: a path that escapes is a 404,
- * never a read.
- */
+
+
+
+
+
+
+
+
+
+
+
 public final class StaticAssets {
 
     private static final Log log = Log.of(StaticAssets.class);
@@ -97,7 +97,7 @@ public final class StaticAssets {
         return buffer.toByteArray();
     }
 
-    /** Returns the file only if it exists and stays under the web root. */
+
     private Path resolve(String requested) {
         if (requested == null || requested.isEmpty() || requested.equals("/")) {
             return root.resolve("index.html");

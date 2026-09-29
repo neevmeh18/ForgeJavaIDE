@@ -18,15 +18,15 @@ public class DebugRegressionTest {
         DebugAdapter adapter = (DebugAdapter) Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[] { DebugAdapter.class }, (proxy, method, args) -> {
             return switch (method.getName()) {
                 case "type" -> "test";
-                case "start" -> { if (((DebugTypes.DebugConfiguration) args[2]).name().equals("fail")) throw new IllegalStateException("startup failed"); yield null; }
+                case "start" -> { if (((dev.forge.debug.DebugConfiguration) args[2]).name().equals("fail")) throw new IllegalStateException("startup failed"); yield null; }
                 case "stop" -> { stopped.incrementAndGet(); yield null; }
                 default -> List.of();
             };
         });
         debug.register(adapter);
-        assertThrows(IllegalStateException.class, () -> debug.start(one, new DebugTypes.DebugConfiguration("fail", "test", "launch", Map.of())));
+        assertThrows(IllegalStateException.class, () -> debug.start(one, new dev.forge.debug.DebugConfiguration("fail", "test", "launch", Map.of())));
         assertTrue(debug.sessions(one).isEmpty()); assertEquals(1, stopped.get());
-        var info = debug.start(one, new DebugTypes.DebugConfiguration("ok", "test", "launch", Map.of()));
+        var info = debug.start(one, new dev.forge.debug.DebugConfiguration("ok", "test", "launch", Map.of()));
         var id = DebugSessionId.of(info.id());
         assertThrows(ForgeException.class, () -> debug.stop(id, two));
         assertEquals(1, debug.sessions(one).size());

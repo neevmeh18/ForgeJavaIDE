@@ -1,11 +1,4 @@
-/*
- * Workbench styling.
- *
- * One stylesheet with CSS custom properties for the palette: a product building on the
- * framework re-themes by overriding the tokens rather than by editing components. Both themes
- * are defined here and selected by the `workbench.colorTheme` setting, which is resolved by the
- * backend like any other setting.
- */
+
 
 :root {
   --bg: #1e1e22;
@@ -92,7 +85,7 @@ button:focus-visible {
   cursor: default;
 }
 
-/* ---- login ------------------------------------------------------------------------ */
+
 
 .login-screen {
   position: fixed;
@@ -134,7 +127,7 @@ button:focus-visible {
   font-size: 12px;
 }
 
-/* ---- layout ------------------------------------------------------------------------ */
+
 
 #workbench,
 .workbench {
@@ -308,7 +301,7 @@ button:focus-visible {
   line-height: 1.5;
 }
 
-/* ---- explorer ---------------------------------------------------------------------- */
+
 
 .tree-row {
   display: flex;
@@ -373,7 +366,7 @@ button:focus-visible {
   color: var(--accent-text);
 }
 
-/* ---- editor ------------------------------------------------------------------------ */
+
 
 .editor-area {
   display: flex;
@@ -444,7 +437,7 @@ button:focus-visible {
   font-size: 12px;
 }
 
-/* ---- panel ------------------------------------------------------------------------- */
+
 
 .panel {
   display: flex;
@@ -573,7 +566,7 @@ button:focus-visible {
   font-weight: 600;
 }
 
-/* ---- search ------------------------------------------------------------------------ */
+
 
 .search-form {
   display: flex;
@@ -611,7 +604,7 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-/* ---- source control ---------------------------------------------------------------- */
+
 
 .scm-commit {
   display: flex;
@@ -672,7 +665,7 @@ button:focus-visible {
   color: var(--warning);
 }
 
-/* ---- extensions and settings ------------------------------------------------------- */
+
 
 .extension-row,
 .setting-row {
@@ -722,7 +715,7 @@ button:focus-visible {
   width: auto;
 }
 
-/* ---- palette ----------------------------------------------------------------------- */
+
 
 .palette-overlay {
   position: fixed;
@@ -810,7 +803,7 @@ button:focus-visible {
   list-style: none;
 }
 
-/* ---- status bar and notifications -------------------------------------------------- */
+
 
 .status-bar {
   display: flex;

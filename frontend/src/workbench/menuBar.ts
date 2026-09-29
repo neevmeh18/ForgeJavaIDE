@@ -3,14 +3,14 @@ import type { Keybindings } from '../forge/keybindings';
 import type { MenuItem } from '../forge/protocol';
 import { clear, el } from './dom';
 
-/**
- * The menu bar.
- *
- * <p>Entirely generated from contributed menu items: the workbench ships no menu structure of
- * its own, so what appears here is exactly what the backend's contribution registry holds,
- * extensions included. Each entry executes a command id, which is why a menu item, its
- * keybinding and its palette entry can never diverge.
- */
+
+
+
+
+
+
+
+
 const MENUS: Array<{ id: string; title: string }> = [
   { id: 'menu.file', title: 'File' },
   { id: 'menu.edit', title: 'Edit' },

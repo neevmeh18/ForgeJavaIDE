@@ -7,19 +7,19 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
+import dev.forge.core.query.QueryDescriptor;
 
-/**
- * The filesystem feature's public surface: {@code file.*} commands and queries.
- *
- * <p>Everything here is a thin intent that delegates straight to {@link FileService}. Splitting
- * each of these into a command class, a request, a response, a validator and a mapper would
- * turn one readable file into thirty-five, and would not make {@code file.rename} any clearer.
- *
- * <p>All of them are marked sensitive: writing to a workspace is a privileged operation, so no
- * extension may take the id over, and every one re-derives the workspace from the caller's
- * context rather than trusting an id supplied by the frontend.
- */
+
+
+
+
+
+
+
+
+
+
+
 public final class FileCommands {
 
     private final FileService files;
@@ -30,7 +30,7 @@ public final class FileCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("file.save", "File", "Save File") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("content", "string", "content"), new CommandDescriptor.Argument("modifiedAt", "number", "modifiedAt"), new CommandDescriptor.Argument("revision", "string", "revision returned by file.read"))
+                CommandDescriptor.of("file.save", "File", "Save File") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"), new dev.forge.core.command.Argument("content", "string", "content"), new dev.forge.core.command.Argument("modifiedAt", "number", "modifiedAt"), new dev.forge.core.command.Argument("revision", "string", "revision returned by file.read"))
                         .describedAs("Writes editor content to the workspace filesystem")
                         .workspaceScoped().asSensitive(),
                 ctx -> files.writeText(resource(ctx), ctx.args().requiredString("content"),
@@ -39,17 +39,17 @@ public final class FileCommands {
                                         "file.save requires the modifiedAt value returned by file.read")), ctx.args().requiredString("revision")));
 
         commands.register(
-                CommandDescriptor.of("file.create", "File", "New File") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
+                CommandDescriptor.of("file.create", "File", "New File") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.createFile(resource(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.createDirectory", "File", "New Folder") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
+                CommandDescriptor.of("file.createDirectory", "File", "New Folder") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.createDirectory(resource(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.delete", "File", "Delete") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
+                CommandDescriptor.of("file.delete", "File", "Delete") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"))
                         .describedAs("Deletes a file, or a directory when 'recursive' is set")
                         .workspaceScoped().asSensitive(),
                 ctx -> {
@@ -58,7 +58,7 @@ public final class FileCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("file.rename", "File", "Rename") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("newName", "string", "newName"))
+                CommandDescriptor.of("file.rename", "File", "Rename") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"), new dev.forge.core.command.Argument("newName", "string", "newName"))
                         .workspaceScoped().asSensitive().asUndoable(),
                 ctx -> {
                     Resource from = resource(ctx);
@@ -66,12 +66,12 @@ public final class FileCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("file.move", "File", "Move") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("to", "string", "to"))
+                CommandDescriptor.of("file.move", "File", "Move") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"), new dev.forge.core.command.Argument("to", "string", "to"))
                         .workspaceScoped().asSensitive().asUndoable(),
                 ctx -> files.move(resource(ctx), target(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.copy", "File", "Copy") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("to", "string", "to"))
+                CommandDescriptor.of("file.copy", "File", "Copy") .withArguments(new dev.forge.core.command.Argument("path", "string", "path"), new dev.forge.core.command.Argument("to", "string", "to"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.copy(resource(ctx), target(ctx)));
 
@@ -87,16 +87,16 @@ public final class FileCommands {
                 QueryDescriptor.of("file.stat", "File metadata").workspaceScoped(),
                 (ctx, args) -> files.stat(resource(ctx, args)));
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+s", "workbench.save", "editorFocus"));
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
+        contributions.addKeybinding(dev.forge.core.contrib.Keybinding.of("ctrl+s", "workbench.save", "editorFocus"));
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
                 ContributionRegistry.MENU_FILE, "workbench.save", "Save", "write", 10));
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
                 ContributionRegistry.MENU_EXPLORER_CONTEXT, "file.rename", "Rename…", "edit", 10));
-        contributions.addMenuItem(ContributionRegistry.MenuItem.of(
+        contributions.addMenuItem(dev.forge.core.contrib.MenuItem.of(
                 ContributionRegistry.MENU_EXPLORER_CONTEXT, "file.delete", "Delete", "edit", 20));
     }
 
-    /** The workspace always comes from the authenticated context, never from the arguments. */
+
     private static Resource resource(CommandContext ctx) {
         return Resource.of(ctx.requireWorkspace(), ctx.args().requiredString("path"));
     }

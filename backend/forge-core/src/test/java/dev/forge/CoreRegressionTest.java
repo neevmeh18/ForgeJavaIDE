@@ -20,7 +20,7 @@ import static org.junit.Assert.*;
 public class CoreRegressionTest {
     private static final WorkspaceId W = WorkspaceId.of("work-one");
     private static final SessionId S = SessionId.of("session-one");
-    private RequestContext context() { return new RequestContext(UserId.of("user"), S, W, RequestContext.Origin.UI, Cancellation.none()); }
+    private RequestContext context() { return new RequestContext(UserId.of("user"), S, W, dev.forge.core.Origin.UI, Cancellation.none()); }
 
     @Test public void sessionLimitAndRevocation() throws Exception {
         SessionService sessions = new SessionService(new EventBus(), Duration.ofMinutes(5), Duration.ofHours(1), 1);
@@ -54,9 +54,9 @@ public class CoreRegressionTest {
 
     @Test public void argumentMetadataSurvivesBuildersAndIsEnforced() throws Exception {
         var registry = new CommandRegistry(); var events = new EventBus();
-        var executor = new CommandExecutor(registry, events, CommandExecutor.Authorizer.PERMISSIVE, 8, 2);
+        var executor = new CommandExecutor(registry, events, dev.forge.core.command.Authorizer.PERMISSIVE, 8, 2);
         var descriptor = CommandDescriptor.of("sample.echo", "Test", "Echo")
-                .withArguments(new CommandDescriptor.Argument("text", "string", "Text"))
+                .withArguments(new dev.forge.core.command.Argument("text", "string", "Text"))
                 .workspaceScoped().describedAs("Echoes text").contributedBy(ExtensionId.of("sample"));
         assertEquals(1, descriptor.arguments().size());
         AtomicInteger invoked = new AtomicInteger();
@@ -69,9 +69,9 @@ public class CoreRegressionTest {
     }
 
     @Test public void extensionContributionsDisappearAndReturn() {
-        var commands = new CommandRegistry(); var queries = new QueryRegistry(QueryRegistry.Authorizer.PERMISSIVE);
+        var commands = new CommandRegistry(); var queries = new QueryRegistry(dev.forge.core.query.Authorizer.PERMISSIVE);
         var events = new EventBus(); var contributions = new ContributionRegistry();
-        var executor = new CommandExecutor(commands, events, CommandExecutor.Authorizer.PERMISSIVE, 8, 2);
+        var executor = new CommandExecutor(commands, events, dev.forge.core.command.Authorizer.PERMISSIVE, 8, 2);
         var extensions = new ExtensionRegistry(commands, queries, executor, events, contributions);
         var id = ExtensionId.of("sample");
         AtomicInteger activation = new AtomicInteger(); AtomicInteger disposal = new AtomicInteger();
@@ -113,7 +113,7 @@ public class CoreRegressionTest {
         try {
             for (int i = 0; i < 10; i++) {
                 var execution = tasks.run(W, "hello");
-                assertEquals(TaskService.State.SUCCEEDED, execution.state());
+                assertEquals(dev.forge.tasks.State.SUCCEEDED, execution.state());
                 assertTrue(terminals.scrollback(execution.terminalId(), W).length() <= 65536);
             }
         } finally { tasks.dispose(); terminals.dispose(); }
@@ -127,7 +127,7 @@ public class CoreRegressionTest {
             List<Future<?>> starts = new ArrayList<>();
             for (int i = 0; i < 24; i++) starts.add(pool.submit(() -> {
                 try { terminals.run(W, "echo", List.of("hello"), "", "Test", Map.of()); accepted.incrementAndGet(); }
-                catch (ForgeException expected) { assertEquals(ForgeException.Code.CONFLICT, expected.code()); }
+                catch (ForgeException expected) { assertEquals(dev.forge.core.Code.CONFLICT, expected.code()); }
             }));
             for (var start : starts) start.get(3, TimeUnit.SECONDS);
             assertEquals(16, accepted.get());
@@ -135,7 +135,7 @@ public class CoreRegressionTest {
         } finally { terminals.dispose(); }
     }
 
-    private static TerminalSession session(TerminalProvider.Spec spec, boolean alive) {
+    private static TerminalSession session(dev.forge.terminal.Spec spec, boolean alive) {
         return new TerminalSession() {
             public TerminalId id() { return spec.id(); }
             public WorkspaceId workspaceId() { return spec.workspace(); }

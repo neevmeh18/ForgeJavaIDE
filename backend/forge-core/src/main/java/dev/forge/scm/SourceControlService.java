@@ -1,20 +1,20 @@
 package dev.forge.scm;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
-import dev.forge.scm.ScmTypes.Branch;
-import dev.forge.scm.ScmTypes.Commit;
-import dev.forge.scm.ScmTypes.Diff;
-import dev.forge.scm.ScmTypes.RepositoryStatus;
+import dev.forge.scm.Branch;
+import dev.forge.scm.Commit;
+import dev.forge.scm.Diff;
+import dev.forge.scm.RepositoryStatus;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Source-control coordination with one serialized operation stream per workspace. */
-public final class SourceControlService implements Lifecycle.Component {
+
+public final class SourceControlService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(SourceControlService.class);
     private static final int MAX_COMMIT_MESSAGE_CHARS = 16 * 1024;
@@ -79,7 +79,7 @@ public final class SourceControlService implements Lifecycle.Component {
             }
             Commit commit = provider.commit(workspace, message.strip(), amend);
             log.with("workspaceId", workspace).with("commit", commit.shortId()).info("Committed");
-            events.publish(new ScmEvents.Committed(workspace, commit.id(), commit.message()));
+            events.publish(new dev.forge.scm.Committed(workspace, commit.id(), commit.message()));
             announceLocked(workspace);
             return commit;
         }
@@ -100,7 +100,7 @@ public final class SourceControlService implements Lifecycle.Component {
             }
             provider.checkout(workspace, branch, create);
             log.with("workspaceId", workspace).with("branch", branch).info("Checked out");
-            events.publish(new ScmEvents.BranchChanged(workspace, branch));
+            events.publish(new dev.forge.scm.BranchChanged(workspace, branch));
             announceLocked(workspace);
         }
     }
@@ -157,7 +157,7 @@ public final class SourceControlService implements Lifecycle.Component {
     private void announceLocked(WorkspaceId workspace) {
         SourceControlProvider provider = require(workspace);
         RepositoryStatus status = provider.status(workspace);
-        events.publish(new ScmEvents.RepositoryChanged(workspace, status.branch(), status.changes().size()));
+        events.publish(new dev.forge.scm.RepositoryChanged(workspace, status.branch(), status.changes().size()));
     }
 
     private Optional<SourceControlProvider> find(WorkspaceId workspace) {

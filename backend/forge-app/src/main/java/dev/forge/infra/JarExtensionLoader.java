@@ -2,7 +2,7 @@ package dev.forge.infra;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.ExtensionId;
+import dev.forge.core.ExtensionId;
 import dev.forge.core.Log;
 import dev.forge.core.extension.Extension;
 import dev.forge.core.extension.ExtensionDescriptor;
@@ -18,17 +18,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Finds extensions as jars in {@code IDE_EXTENSIONS_DIR} and loads them on demand.
- *
- * <p>Discovery reads each jar's {@code forge-extension.json} without loading a single class:
- * activation conditions are known up front, so an extension that is never needed is never
- * loaded. Each one gets its own {@link URLClassLoader}, which keeps extensions from colliding
- * over shared class names and lets a deactivated extension be released.
- *
- * <p>A jar with a broken or missing manifest is skipped with a warning. Nothing about a faulty
- * extension is allowed to stop the IDE from starting.
- */
+
+
+
+
+
+
+
+
+
+
+
 public final class JarExtensionLoader {
 
     private static final Log log = Log.of(JarExtensionLoader.class);
@@ -42,13 +42,13 @@ public final class JarExtensionLoader {
         this.directory = directory;
     }
 
-    /**
-     * Registers every well-formed extension found. Activation happens later, on demand.
-     *
-     * <p>{@code onContributions} receives each manifest's declarative contributions at discovery
-     * time — before any class is loaded — so a setting an extension declares is visible in the
-     * settings UI even if the extension never activates.
-     */
+
+
+
+
+
+
+
     public void discoverInto(ExtensionRegistry registry,
                              java.util.function.BiConsumer<ExtensionId, Map<String, Object>> onContributions) {
         if (!Files.isDirectory(directory)) {
@@ -129,7 +129,7 @@ public final class JarExtensionLoader {
         }
     }
 
-    /** Couples the extension instance to the class loader that owns it. */
+
     private static final class LoadedExtension implements Extension {
         private final Extension delegate;
         private final URLClassLoader loader;
@@ -165,7 +165,7 @@ public final class JarExtensionLoader {
             try {
                 loader.close();
             } catch (IOException ignored) {
-                // Best effort during extension teardown.
+
             }
         }
     }

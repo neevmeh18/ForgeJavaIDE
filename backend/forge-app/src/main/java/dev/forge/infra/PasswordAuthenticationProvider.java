@@ -1,5 +1,6 @@
 package dev.forge.infra;
 
+import dev.forge.auth.Credentials;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.User;
 import dev.forge.core.ForgeException;
@@ -12,18 +13,18 @@ import java.util.Optional;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
-/**
- * The single-identity password provider.
- *
- * <p>This is the "simple authentication initially" the framework asks for: one configured
- * account, no roles, no directory. It is still implemented properly — the configured password
- * is turned into a PBKDF2 hash at startup and the plaintext is wiped, verification is
- * constant-time, and a failure never says whether it was the username or the password that was
- * wrong.
- *
- * <p>Replacing it with OIDC, SSO or LDAP means writing another {@link AuthenticationProvider};
- * nothing else in the framework changes, because nothing else knows how identity is proved.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 public final class PasswordAuthenticationProvider implements AuthenticationProvider {
 
     private static final Log log = Log.of(PasswordAuthenticationProvider.class);
@@ -63,8 +64,8 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
 
     @Override
     public Optional<User> authenticate(Credentials credentials) {
-        // Always derive, even for an unknown username: skipping the work would let an attacker
-        // distinguish "no such user" from "wrong password" by timing alone.
+
+
         admit();
         if (!checks.tryAcquire()) throw ForgeException.unavailable("Login busy; retry shortly");
         byte[] candidate;
@@ -76,7 +77,7 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
             log.info("Authentication rejected");
             return Optional.empty();
         }
-        return Optional.of(new User(dev.forge.core.Ids.UserId.of(username), username, id(),
+        return Optional.of(new User(dev.forge.core.UserId.of(username), username, id(),
                 Map.of("provider", id())));
     }
 
@@ -93,7 +94,7 @@ public final class PasswordAuthenticationProvider implements AuthenticationProvi
         }
     }
 
-    /** Never log or serialise the configured credential; this guards against accidents. */
+
     @Override
     public String toString() {
         return "PasswordAuthenticationProvider[username=" + username + "]";

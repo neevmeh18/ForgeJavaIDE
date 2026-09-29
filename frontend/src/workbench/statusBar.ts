@@ -2,12 +2,12 @@ import type { WorkbenchContext } from '../forge/context';
 import type { ScmStatus } from '../forge/protocol';
 import { clear, el } from './dom';
 
-/**
- * The bottom strip: workspace, branch, problems, cursor position, identity.
- *
- * <p>Every segment is driven by events rather than polling — a commit, a save or a diagnostic
- * updates it because the backend said something happened.
- */
+
+
+
+
+
+
 export class StatusBar {
   readonly element = el('footer', { class: 'status-bar' });
 

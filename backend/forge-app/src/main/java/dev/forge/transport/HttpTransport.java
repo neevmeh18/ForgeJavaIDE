@@ -25,25 +25,25 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-/**
- * HTTP and server-sent events, the only transport implementation the framework ships.
- *
- * <p>Four endpoints, not one per feature:
- * <pre>
- *   POST /api/command   run a command
- *   POST /api/query     run a query
- *   GET  /api/events    subscribe to the event stream
- *   GET  /api/health    readiness
- * </pre>
- * Everything else is the frontend bundle. Adding WebSocket or JSON-RPC later means adding a
- * sibling of this class, because all it does is translate — the {@link Gateway} it calls has no
- * idea HTTP exists.
- *
- * <p>Credentials travel only in the {@code Authorization} header, including on the event stream
- * (read with {@code fetch}, not {@code EventSource}). With no cookie there is no ambient
- * authority and therefore no CSRF surface.
- */
-public final class HttpTransport implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+public final class HttpTransport implements dev.forge.core.Component {
 
     private static final Log log = Log.of(HttpTransport.class);
     private static final long MAX_BODY_BYTES = 16L * 1024 * 1024;
@@ -54,7 +54,7 @@ public final class HttpTransport implements Lifecycle.Component {
 
     private static final String CONTENT_SECURITY_POLICY = String.join("; ",
             "default-src 'self'",
-            // Monaco compiles its tokenizers at runtime and loads its workers as blobs.
+
             "script-src 'self' 'unsafe-eval' blob:",
             "worker-src 'self' blob:",
             "style-src 'self' 'unsafe-inline'",
@@ -109,8 +109,8 @@ public final class HttpTransport implements Lifecycle.Component {
         } catch (IOException e) {
             throw ForgeException.internal("Could not bind " + host + ":" + port, e);
         }
-        // Virtual threads: a blocked request (a long command, an idle event stream) costs a
-        // stack rather than a platform thread, so thousands of open streams stay cheap.
+
+
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/api/command", exchange -> handle(exchange, this::command));
         server.createContext("/api/query", exchange -> handle(exchange, this::query));
@@ -141,20 +141,20 @@ public final class HttpTransport implements Lifecycle.Component {
     private void handle(HttpExchange exchange, Route route) throws IOException {
         securityHeaders(exchange);
         if (!requestSlots.tryAcquire()) {
-            writeJson(exchange, 503, new Gateway.Result(false, null,
-                    new Gateway.ErrorView("UNAVAILABLE", "Server is busy", Map.of()), null, false));
+            writeJson(exchange, 503, new dev.forge.transport.Result(false, null,
+                    new dev.forge.transport.ErrorView("UNAVAILABLE", "Server is busy", Map.of()), null, false));
             exchange.close();
             return;
         }
         try {
             route.handle(exchange);
         } catch (ForgeException e) {
-            writeJson(exchange, statusFor(e.code()), new Gateway.Result(false, null,
-                    Gateway.ErrorView.of(e), null, false));
+            writeJson(exchange, statusFor(e.code()), new dev.forge.transport.Result(false, null,
+                    dev.forge.transport.ErrorView.of(e), null, false));
         } catch (RuntimeException e) {
             log.error("Unhandled transport failure", e);
-            writeJson(exchange, 500, new Gateway.Result(false, null,
-                    new Gateway.ErrorView("INTERNAL_FAILURE", "An internal error occurred", Map.of()),
+            writeJson(exchange, 500, new dev.forge.transport.Result(false, null,
+                    new dev.forge.transport.ErrorView("INTERNAL_FAILURE", "An internal error occurred", Map.of()),
                     null, false));
         } finally {
             requestSlots.release();
@@ -175,7 +175,7 @@ public final class HttpTransport implements Lifecycle.Component {
         Args args = Args.of(nested(body, "args"));
         boolean async = Boolean.TRUE.equals(body.get("async"));
 
-        Gateway.Result result = gateway.command(id, args, async, ctx);
+        dev.forge.transport.Result result = gateway.command(id, args, async, ctx);
         writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)), result);
     }
 
@@ -186,14 +186,14 @@ public final class HttpTransport implements Lifecycle.Component {
         Cancellation cancellation = new Cancellation();
         RequestContext ctx = context(exchange, cancellation);
 
-        Gateway.Result result = gateway.query(requireString(body, "id"), Args.of(nested(body, "args")), ctx);
+        dev.forge.transport.Result result = gateway.query(requireString(body, "id"), Args.of(nested(body, "args")), ctx);
         writeJson(exchange, result.ok() ? 200 : statusFor(codeOf(result)), result);
     }
 
-    /**
-     * The event stream. Held open for the life of the session; a heartbeat comment keeps
-     * intermediaries from closing an idle connection.
-     */
+
+
+
+
     private void events(HttpExchange exchange) throws IOException {
         requirePath(exchange, "/api/events");
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
@@ -228,10 +228,10 @@ public final class HttpTransport implements Lifecycle.Component {
         }
     }
 
-    /**
-     * Readiness, not liveness: reports healthy only when the application can actually serve
-     * requests, so an orchestrator waits for something useful rather than for a live process.
-     */
+
+
+
+
     private void health(HttpExchange exchange) throws IOException {
         requirePath(exchange, "/api/health");
         boolean ready = Boolean.TRUE.equals(readiness.get());
@@ -342,13 +342,13 @@ public final class HttpTransport implements Lifecycle.Component {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
     }
 
-    private static ForgeException.Code codeOf(Gateway.Result result) {
+    private static dev.forge.core.Code codeOf(dev.forge.transport.Result result) {
         return result.error() == null
-                ? ForgeException.Code.INTERNAL_FAILURE
-                : ForgeException.Code.valueOf(result.error().code());
+                ? dev.forge.core.Code.INTERNAL_FAILURE
+                : dev.forge.core.Code.valueOf(result.error().code());
     }
 
-    private static int statusFor(ForgeException.Code code) {
+    private static int statusFor(dev.forge.core.Code code) {
         return switch (code) {
             case NOT_FOUND -> 404;
             case INVALID_ARGUMENT -> 400;
@@ -362,7 +362,7 @@ public final class HttpTransport implements Lifecycle.Component {
         };
     }
 
-    /** Stops an over-long body before it reaches the parser, whatever Content-Length claimed. */
+
     private static final class LimitedInputStream extends InputStream {
 
         private final InputStream delegate;

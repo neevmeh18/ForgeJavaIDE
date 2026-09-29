@@ -3,14 +3,14 @@ import type { TerminalInfo } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * The terminal panel.
- *
- * <p>Line-oriented, matching the process-based terminal provider the framework ships: input is
- * sent a line at a time with `terminal.write`, output arrives as `terminal.output` events. A
- * product that registers a pseudo-terminal provider would pair it with a richer view here; the
- * commands and events between them do not change.
- */
+
+
+
+
+
+
+
+
 export class TerminalView {
   readonly element = el('div', { class: 'view terminal-view' });
 

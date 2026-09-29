@@ -1,7 +1,7 @@
 package dev.forge.core.extension;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.ExtensionId;
+import dev.forge.core.ExtensionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.command.CommandExecutor;
@@ -14,39 +14,29 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Tracks extensions through their lifecycle and activates them lazily.
- *
- * <p>States: {@code DISCOVERED -> LOADED -> ACTIVATED -> DEACTIVATED}, with {@code FAILED}
- * reachable from loading or activation. A failure is contained: the extension is marked failed,
- * its registrations are rolled back, an {@code extension.failed} event is published, and the
- * IDE carries on. One bad extension must never take the workbench down with it.
- *
- * <p>Discovery and class loading are infrastructure concerns and stay behind {@link Loader}, so
- * this class works the same for jars on disk, a future extension host process, or extensions
- * bundled into a cloud image.
- */
-public final class ExtensionRegistry implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+
+public final class ExtensionRegistry implements dev.forge.core.Component {
 
     private static final Log log = Log.of(ExtensionRegistry.class);
 
-    public enum State {
-        DISCOVERED,
-        LOADED,
-        ACTIVATED,
-        DEACTIVATED,
-        FAILED
-    }
 
-    /** Turns a manifest into an instance. Implemented by infrastructure (jar class loading). */
-    @FunctionalInterface
-    public interface Loader {
-        Extension load(ExtensionDescriptor descriptor) throws Exception;
-    }
 
-    /** What the workbench shows about an extension. */
-    public record Status(ExtensionId id, String name, String version, State state, String failure) {
-    }
+
+
+
+
+
 
     private static final class Entry {
         final ExtensionDescriptor descriptor;
@@ -80,7 +70,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
 
     @Override
     public void start() {
-        // Wire lazy activation: an unknown command id gives extensions a chance to claim it.
+
         commands.onUnresolved(id -> activateFor(ExtensionDescriptor.onCommand(id.value())));
         activateFor(ExtensionDescriptor.ON_STARTUP);
     }
@@ -97,10 +87,10 @@ public final class ExtensionRegistry implements Lifecycle.Component {
         log.with("extensionId", descriptor.id()).with("version", descriptor.version()).info("Extension discovered");
     }
 
-    /**
-     * Activates every extension whose manifest declares {@code activationEvent}. Used for
-     * {@code onStartup}, {@code onWorkspace}, {@code onLanguage:*} and {@code onCommand:*}.
-     */
+
+
+
+
     public void activateFor(String activationEvent) {
         for (Entry entry : entries.values()) {
             if (entry.state == State.DISCOVERED && entry.descriptor.activationEvents().contains(activationEvent)) {
@@ -109,7 +99,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
         }
     }
 
-    /** Idempotent: activating an already-active or failed extension does nothing. */
+
     public void activate(ExtensionId id) {
         Entry entry = entries.get(id);
         if (entry == null) {
@@ -120,8 +110,8 @@ public final class ExtensionRegistry implements Lifecycle.Component {
                     && entry.state != State.FAILED) {
                 return;
             }
-            // A Store is single-use: dispose() permanently closes it. Every activation attempt
-            // therefore gets a fresh registration scope.
+
+
             entry.disposables = new Lifecycle.Store();
             Log scoped = log.with("extensionId", id);
             try {
@@ -132,7 +122,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
                 entry.state = State.ACTIVATED;
                 entry.failure = null;
                 scoped.info("Extension activated");
-                events.publish(new ExtensionEvents.ExtensionActivated(id, entry.descriptor.name()));
+                events.publish(new dev.forge.core.extension.ExtensionActivated(id, entry.descriptor.name()));
             } catch (Throwable t) {
                 entry.state = State.FAILED;
                 entry.failure = "Extension activation failed; see server logs";
@@ -142,7 +132,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
                     entry.instance = null;
                 }
                 rollback(entry, id);
-                events.publish(new ExtensionEvents.ExtensionFailed(id, "activate", entry.failure));
+                events.publish(new dev.forge.core.extension.ExtensionFailed(id, "activate", entry.failure));
             }
         }
     }
@@ -163,7 +153,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
             rollback(entry, id);
             entry.instance = null;
             entry.state = State.DEACTIVATED;
-            events.publish(new ExtensionEvents.ExtensionDeactivated(id));
+            events.publish(new dev.forge.core.extension.ExtensionDeactivated(id));
         }
     }
 
@@ -179,7 +169,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
         return list().stream().filter(s -> s.id().equals(id)).findFirst();
     }
 
-    /** Removes everything an extension contributed, whether it deactivated cleanly or not. */
+
     private void rollback(Entry entry, ExtensionId id) {
         entry.disposables.dispose();
         commands.unregisterAllFrom(id);

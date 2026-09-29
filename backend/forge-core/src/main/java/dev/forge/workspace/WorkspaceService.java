@@ -1,8 +1,8 @@
 package dev.forge.workspace;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.SessionId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.SessionId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -16,18 +16,18 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Workspace lifecycle and the registry of what is currently open.
- *
- * <p>Implements {@link FileSystem.Locator}, which is how every other feature reaches storage:
- * they hold a {@code Locator}, not a {@code WorkspaceService}, so the filesystem, editor,
- * search and language features have no compile-time dependency on this package.
- *
- * <p>Sessions <em>attach</em> to an open workspace rather than owning it. A workspace stays
- * open while at least one session is attached, and closing is an explicit act — the groundwork
- * for several people (or a person plus an automation client) sharing one environment.
- */
-public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+public final class WorkspaceService implements dev.forge.filesystem.Locator, dev.forge.core.Component {
 
     private static final Log log = Log.of(WorkspaceService.class);
 
@@ -68,7 +68,7 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         List.copyOf(open.keySet()).forEach(this::close);
     }
 
-    /** Everything any provider can offer, opened or not. */
+
     public List<Workspace> available() {
         List<Workspace> all = new ArrayList<>();
         for (WorkspaceProvider provider : providers.values()) {
@@ -92,15 +92,15 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         return provider(scheme).create(name, options);
     }
 
-    /**
-     * Opens a workspace and attaches the calling session. Opening an already-open workspace is
-     * not an error — it is the normal path for the second session joining.
-     *
-     * <p>The event is published only once the workspace is registered and visible. Listeners
-     * legitimately call straight back in — the filesystem feature starts watching the workspace
-     * the moment it opens — and announcing a workspace that cannot yet be looked up would make
-     * that impossible.
-     */
+
+
+
+
+
+
+
+
+
     public Workspace open(WorkspaceId id, SessionId session) {
         synchronized (openLock) {
             Open entry = open.get(id);
@@ -112,10 +112,10 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
                 open.put(id, entry);
                 log.with("workspaceId", id).with("scheme", entry.workspace.location().scheme())
                         .info("Workspace opened");
-                events.publish(new WorkspaceEvents.WorkspaceOpened(id, entry.workspace.name()));
+                events.publish(new dev.forge.workspace.WorkspaceOpened(id, entry.workspace.name()));
             }
             if (session != null && entry.sessions.add(session)) {
-                events.publish(new WorkspaceEvents.SessionAttached(id, session));
+                events.publish(new dev.forge.workspace.SessionAttached(id, session));
             }
             return entry.workspace;
         }
@@ -125,7 +125,7 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         Workspace resolved = locate(id);
         WorkspaceProvider provider = provider(resolved.location().scheme());
         try {
-            return provider.open(id).withState(Workspace.State.OPEN);
+            return provider.open(id).withState(dev.forge.workspace.State.OPEN);
         } catch (RuntimeException e) {
             log.with("workspaceId", id).error("Workspace open failed", e);
             throw ForgeException.normalize(e).with("workspaceId", id.value());
@@ -136,22 +136,22 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         synchronized (openLock) {
             Open entry = require(id);
             if (session != null && entry.sessions.add(session)) {
-                events.publish(new WorkspaceEvents.SessionAttached(id, session));
+                events.publish(new dev.forge.workspace.SessionAttached(id, session));
             }
         }
     }
 
-    /** Detaches one session. The workspace stays open for whoever else is still attached. */
+
     public void detach(WorkspaceId id, SessionId session) {
         synchronized (openLock) {
             Open entry = open.get(id);
             if (entry != null && session != null && entry.sessions.remove(session)) {
-                events.publish(new WorkspaceEvents.SessionDetached(id, session));
+                events.publish(new dev.forge.workspace.SessionDetached(id, session));
             }
         }
     }
 
-    /** Atomically detaches a session and closes the workspace only if nobody remains attached. */
+
     public void release(WorkspaceId id, SessionId session) {
         synchronized (openLock) {
             Open entry = open.get(id);
@@ -159,7 +159,7 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
                 return;
             }
             if (session != null && entry.sessions.remove(session)) {
-                events.publish(new WorkspaceEvents.SessionDetached(id, session));
+                events.publish(new dev.forge.workspace.SessionDetached(id, session));
             }
             if (entry.sessions.isEmpty()) {
                 closeLocked(id, entry);
@@ -167,14 +167,14 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         }
     }
 
-    /** Releases an expired/logged-out session from every workspace it was attached to. */
+
     public void releaseSession(SessionId session) {
         if (session == null) return;
         synchronized (openLock) {
             for (var item : List.copyOf(open.entrySet())) {
                 Open entry = item.getValue();
                 if (entry.sessions.remove(session)) {
-                    events.publish(new WorkspaceEvents.SessionDetached(item.getKey(), session));
+                    events.publish(new dev.forge.workspace.SessionDetached(item.getKey(), session));
                 }
                 if (entry.sessions.isEmpty()) {
                     closeLocked(item.getKey(), entry);
@@ -183,11 +183,11 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         }
     }
 
-    /** Re-reads the workspace from its provider without disturbing attached sessions. */
+
     public Workspace reload(WorkspaceId id) {
         Open entry = require(id);
-        entry.workspace = locate(id).withState(Workspace.State.OPEN);
-        events.publish(new WorkspaceEvents.WorkspaceReloaded(id));
+        entry.workspace = locate(id).withState(dev.forge.workspace.State.OPEN);
+        events.publish(new dev.forge.workspace.WorkspaceReloaded(id));
         return entry.workspace;
     }
 
@@ -208,7 +208,7 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
             log.with("workspaceId", id).warn("Provider close failed", e);
         }
         log.with("workspaceId", id).info("Workspace closed");
-        events.publish(new WorkspaceEvents.WorkspaceClosed(id));
+        events.publish(new dev.forge.workspace.WorkspaceClosed(id));
         open.remove(id, entry);
         entry.sessions.clear();
     }
@@ -231,14 +231,14 @@ public final class WorkspaceService implements FileSystem.Locator, Lifecycle.Com
         return entry == null ? Optional.empty() : Optional.of(entry.workspace);
     }
 
-    /** Sessions currently working on a workspace — the raw material for future presence. */
+
     public Set<SessionId> sessions(WorkspaceId id) {
         Open entry = open.get(id);
         return entry == null ? Set.of() : Set.copyOf(entry.sessions);
     }
 
-    /** Lets a feature tie a resource (a watcher, a language server) to a workspace's lifetime. */
-    public void onClose(WorkspaceId id, Lifecycle.Disposable disposable) {
+
+    public void onClose(WorkspaceId id, dev.forge.core.Disposable disposable) {
         require(id).disposables.add(disposable);
     }
 

@@ -3,13 +3,13 @@ import { ForgeRequestError } from '../forge/client';
 import type { LoginResult, WorkbenchStatus } from '../forge/protocol';
 import { el } from './dom';
 
-/**
- * The sign-in screen.
- *
- * <p>It runs one command, `auth.login`, and keeps the returned token in memory only. Deliberately
- * not in `localStorage`: a token in storage survives the tab, is readable by any script that
- * manages to run on the page, and cannot be revoked by closing it.
- */
+
+
+
+
+
+
+
 export function showLogin(client: ForgeClient, root: HTMLElement): Promise<LoginResult> {
   return new Promise((resolve) => {
     const username = el('input', {

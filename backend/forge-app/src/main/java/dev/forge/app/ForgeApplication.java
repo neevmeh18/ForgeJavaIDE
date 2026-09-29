@@ -5,7 +5,7 @@ import dev.forge.auth.AuthEvents;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.Authorizer;
 import dev.forge.auth.SessionService;
-import dev.forge.core.Ids.SessionId;
+import dev.forge.core.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.command.CommandExecutor;
@@ -29,6 +29,7 @@ import dev.forge.infra.FileStateStore;
 import dev.forge.infra.GitSourceControlProvider;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
+import dev.forge.infra.MongoSavedSearchStore;
 import dev.forge.infra.PasswordAuthenticationProvider;
 import dev.forge.infra.ProcessTerminalProvider;
 import dev.forge.infra.WorkspaceTaskProvider;
@@ -60,37 +61,37 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * The composition root: the one place that knows how the whole IDE is assembled.
- *
- * <p>Everything is constructed explicitly and handed its collaborators through constructors.
- * There is no dependency-injection container, no component scanning and no static service
- * locator — with this many pieces, one readable assembly is easier to follow than annotations
- * scattered across sixty files, and it makes the dependency direction impossible to fake.
- *
- * <p>Reading top to bottom gives the architecture: core, then features, then infrastructure
- * bound to the capability interfaces, then the transport in front of all of it. Swapping a
- * capability — a different filesystem, a different identity provider, a hosted workspace
- * provider — is an edit to one line of this file.
- */
-public final class ForgeApplication implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+
+
+public final class ForgeApplication implements dev.forge.core.Component {
 
     private static final Log log = Log.of(ForgeApplication.class);
 
     private final Config config;
     private final Lifecycle.Store components = new Lifecycle.Store();
-    private final List<Lifecycle.Component> started;
+    private final List<dev.forge.core.Component> started;
     private volatile boolean ready;
 
     public ForgeApplication(Config config) {
         this.config = config;
 
-        // ---- Core -------------------------------------------------------------------------
+
         EventBus events = new EventBus();
         CommandRegistry commandRegistry = new CommandRegistry();
         ContributionRegistry contributions = new ContributionRegistry();
 
-        // ---- Infrastructure bound to capabilities -----------------------------------------
+
         LocalWorkspaceProvider workspaceProvider = new LocalWorkspaceProvider(config.workspaceRoot(),
                 config.maxWorkspaceBytes(), config.maxDirectoryEntries(), config.maxTraversalEntries());
         StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
@@ -98,7 +99,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         AuthenticationProvider authentication =
                 new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
 
-        // ---- Features ---------------------------------------------------------------------
+
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),
                 config.maxOpenWorkspaces());
         SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
@@ -112,12 +113,13 @@ public final class ForgeApplication implements Lifecycle.Component {
         EditorService editors = new EditorService(files, events);
         SettingsService settings = new SettingsService(stateStore, events);
 
-        // The language feature reads live buffers through a lambda rather than importing the
-        // editor, which keeps the package dependency one-way.
+
+
         LanguageService languages = new LanguageService(
                 (workspace, document) -> snapshotOf(editors, workspace, document), events);
         SearchService search = new SearchService(workspaces, languages::workspaceSymbols,
                 config.maxTraversalEntries());
+        MongoSavedSearchStore savedSearches = new MongoSavedSearchStore();
 
         TerminalService terminals = new TerminalService(
                 new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
@@ -130,14 +132,14 @@ public final class ForgeApplication implements Lifecycle.Component {
         ExtensionRegistry extensions =
                 new ExtensionRegistry(commandRegistry, queries, executor, events, contributions);
 
-        // ---- Feature registration ---------------------------------------------------------
+
         new WorkspaceCommands(workspaces).register(commandRegistry, queries, contributions);
         new FileCommands(files).register(commandRegistry, queries, contributions);
         new EditorCommands(editors, languages).register(commandRegistry, queries, contributions);
         new AuthCommands(authentication, sessions).register(commandRegistry, queries);
         new SettingsCommands(settings).register(commandRegistry, queries, contributions);
         new StateCommands(stateStore).register(commandRegistry, queries);
-        new SearchCommands(search).register(commandRegistry, contributions);
+        new SearchCommands(search, savedSearches).register(commandRegistry, contributions);
         new TerminalCommands(terminals).register(commandRegistry, queries, contributions);
         new TaskCommands(tasks).register(commandRegistry, queries, contributions);
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
@@ -149,35 +151,35 @@ public final class ForgeApplication implements Lifecycle.Component {
         defineSettings(settings);
         defineViews(contributions);
 
-        // ---- Cross-feature wiring, done here so no feature reaches into another -------------
+
         languages.register(new BufferWordLanguageProvider());
 
-        // Document synchronisation. A real language server keeps its own copy of every open
-        // buffer, so it needs open, change and close — routed through events rather than by
-        // giving the language feature a handle on the editor.
+
+
+
         editors.onDocumentChanged(document -> snapshotOf(editors, document.workspaceId(), document.id())
                 .ifPresent(languages::documentChanged));
-        events.subscribe(EditorEvents.EditorOpened.class, opened ->
+        events.subscribe(dev.forge.editor.EditorOpened.class, opened ->
                 snapshotOf(editors, opened.workspaceId(), opened.documentId())
                         .ifPresent(languages::documentOpened));
-        events.subscribe(EditorEvents.EditorClosed.class, closed ->
-                languages.documentClosed(new LanguageTypes.DocumentSnapshot(closed.workspaceId(),
+        events.subscribe(dev.forge.editor.EditorClosed.class, closed ->
+                languages.documentClosed(new dev.forge.language.DocumentSnapshot(closed.workspaceId(),
                         closed.documentId(), closed.path(), closed.languageId(), "", 0)));
 
-        events.subscribe(WorkspaceEvents.WorkspaceOpened.class, opened -> {
+        events.subscribe(dev.forge.workspace.WorkspaceOpened.class, opened -> {
             workspaces.onClose(opened.workspaceId(), files.watch(opened.workspaceId()));
             extensions.activateFor(dev.forge.core.extension.ExtensionDescriptor.ON_WORKSPACE);
         });
-        events.subscribe(AuthEvents.SessionEnded.class, ended -> {
+        events.subscribe(dev.forge.auth.SessionEnded.class, ended -> {
             workspaces.releaseSession(ended.sessionId());
-            stateStore.clear(StateStore.Scope.SESSION, ended.sessionId().value());
+            stateStore.clear(dev.forge.state.Scope.SESSION, ended.sessionId().value());
         });
 
         new JarExtensionLoader(config.extensionsDir())
                 .discoverInto(extensions, (extension, contributes) ->
                         defineContributedSettings(settings, extension, contributes));
 
-        // ---- Transport ---------------------------------------------------------------------
+
         Json json = new Json();
         EventStream stream = new EventStream(events, json,
                 (session, event) -> isVisible(workspaces, session, event),
@@ -187,6 +189,8 @@ public final class ForgeApplication implements Lifecycle.Component {
         HttpTransport http = new HttpTransport(gateway, json, stream,
                 new StaticAssets(config.webRoot()), () -> ready, config.host(), config.port(),
                 config.requestBodyTimeout());
+
+        components.add(savedSearches);
 
         this.started = List.of(executor, workspaces, sessions, editors, terminals, tasks, scm, debug,
                 languages, extensions, gateway, stream, http);
@@ -211,14 +215,14 @@ public final class ForgeApplication implements Lifecycle.Component {
         log.info("Shutdown complete");
     }
 
-    /**
-     * Who may see an event.
-     *
-     * <p>Session-addressed events go to that session only; workspace events go to the sessions
-     * attached to that workspace; command outcomes go to whoever issued them. Anything else is
-     * application-wide. Getting this wrong would leak one user's file changes, terminal output
-     * and command results to every other connected client.
-     */
+
+
+
+
+
+
+
+
     private static boolean isVisible(WorkspaceService workspaces, SessionId session, Event event) {
         if (event.type().startsWith("command.")) {
             return session.equals(event.sessionId());
@@ -232,31 +236,31 @@ public final class ForgeApplication implements Lifecycle.Component {
         return true;
     }
 
-    private static Optional<LanguageTypes.DocumentSnapshot> snapshotOf(
-            EditorService editors, dev.forge.core.Ids.WorkspaceId workspace,
-            dev.forge.core.Ids.DocumentId documentId) {
+    private static Optional<dev.forge.language.DocumentSnapshot> snapshotOf(
+            EditorService editors, dev.forge.core.WorkspaceId workspace,
+            dev.forge.core.DocumentId documentId) {
         try {
             Document document = editors.document(documentId);
             if (!document.workspaceId().equals(workspace)) {
                 return Optional.empty();
             }
-            return Optional.of(new LanguageTypes.DocumentSnapshot(document.workspaceId(), document.id(),
+            return Optional.of(new dev.forge.language.DocumentSnapshot(document.workspaceId(), document.id(),
                     document.path(), document.languageId(), editors.text(document.id()), document.version()));
         } catch (RuntimeException e) {
             return Optional.empty();
         }
     }
 
-    /**
-     * Turns an extension manifest's declared settings into real definitions.
-     *
-     * <p>They land in the {@code EXTENSION} layer, below anything a user or workspace chooses.
-     * A malformed declaration is skipped rather than failing startup: a bad manifest is the
-     * extension author's problem, not the IDE's.
-     */
+
+
+
+
+
+
+
     @SuppressWarnings("unchecked")
     private static void defineContributedSettings(SettingsService settings,
-                                                  dev.forge.core.Ids.ExtensionId extension,
+                                                  dev.forge.core.ExtensionId extension,
                                                   java.util.Map<String, Object> contributes) {
         if (!(contributes.get("settings") instanceof List<?> declared)) {
             return;
@@ -267,13 +271,13 @@ public final class ForgeApplication implements Lifecycle.Component {
             }
             java.util.Map<String, Object> setting = (java.util.Map<String, Object>) fields;
             try {
-                settings.define(extension, new Settings.Definition(
+                settings.define(extension, new dev.forge.settings.Definition(
                         String.valueOf(setting.get("key")),
-                        Settings.Type.valueOf(String.valueOf(setting.getOrDefault("type", "string"))
+                        dev.forge.settings.Type.valueOf(String.valueOf(setting.getOrDefault("type", "string"))
                                 .toUpperCase(java.util.Locale.ROOT)),
                         setting.get("default"),
                         String.valueOf(setting.getOrDefault("description", "")),
-                        Settings.Layer.EXTENSION,
+                        dev.forge.settings.Layer.EXTENSION,
                         List.of(),
                         extension.value()));
             } catch (RuntimeException e) {
@@ -283,33 +287,33 @@ public final class ForgeApplication implements Lifecycle.Component {
         }
     }
 
-    /** The settings this product declares. Extensions add their own via their manifest. */
+
     private static void defineSettings(SettingsService settings) {
-        settings.define(Settings.Definition.of("workbench.colorTheme", Settings.Type.STRING, "dark",
+        settings.define(dev.forge.settings.Definition.of("workbench.colorTheme", dev.forge.settings.Type.STRING, "dark",
                 "Colour theme used by the workbench").choices("dark", "light"));
-        settings.define(Settings.Definition.of("workbench.sidebarWidth", Settings.Type.NUMBER, 260,
+        settings.define(dev.forge.settings.Definition.of("workbench.sidebarWidth", dev.forge.settings.Type.NUMBER, 260,
                 "Width of the sidebar in pixels"));
-        settings.define(Settings.Definition.of("editor.fontSize", Settings.Type.NUMBER, 13,
+        settings.define(dev.forge.settings.Definition.of("editor.fontSize", dev.forge.settings.Type.NUMBER, 13,
                 "Editor font size in pixels"));
-        settings.define(Settings.Definition.of("editor.tabSize", Settings.Type.NUMBER, 4,
+        settings.define(dev.forge.settings.Definition.of("editor.tabSize", dev.forge.settings.Type.NUMBER, 4,
                 "Spaces per indentation level"));
-        settings.define(Settings.Definition.of("editor.wordWrap", Settings.Type.BOOLEAN, false,
+        settings.define(dev.forge.settings.Definition.of("editor.wordWrap", dev.forge.settings.Type.BOOLEAN, false,
                 "Wrap long lines in the editor"));
-        settings.define(Settings.Definition.of("editor.minimap", Settings.Type.BOOLEAN, false,
+        settings.define(dev.forge.settings.Definition.of("editor.minimap", dev.forge.settings.Type.BOOLEAN, false,
                 "Show the editor minimap"));
-        settings.define(Settings.Definition.of("files.autoSave", Settings.Type.BOOLEAN, false,
+        settings.define(dev.forge.settings.Definition.of("files.autoSave", dev.forge.settings.Type.BOOLEAN, false,
                 "Save a document shortly after editing stops"));
-        settings.define(Settings.Definition.of("terminal.fontSize", Settings.Type.NUMBER, 12,
+        settings.define(dev.forge.settings.Definition.of("terminal.fontSize", dev.forge.settings.Type.NUMBER, 12,
                 "Terminal font size in pixels"));
     }
 
     private static void defineViews(ContributionRegistry contributions) {
-        contributions.addView(ContributionRegistry.View.of("explorer", "Explorer", "sidebar", "files", 10));
-        contributions.addView(ContributionRegistry.View.of("search", "Search", "sidebar", "search", 20));
-        contributions.addView(ContributionRegistry.View.of("extensions", "Extensions", "sidebar",
+        contributions.addView(dev.forge.core.contrib.View.of("explorer", "Explorer", "sidebar", "files", 10));
+        contributions.addView(dev.forge.core.contrib.View.of("search", "Search", "sidebar", "search", 20));
+        contributions.addView(dev.forge.core.contrib.View.of("extensions", "Extensions", "sidebar",
                 "extensions", 50));
-        contributions.addView(ContributionRegistry.View.of("terminal", "Terminal", "panel", "terminal", 10));
-        contributions.addView(ContributionRegistry.View.of("problems", "Problems", "panel", "warning", 20));
-        contributions.addView(ContributionRegistry.View.of("tasks", "Tasks", "panel", "checklist", 30));
+        contributions.addView(dev.forge.core.contrib.View.of("terminal", "Terminal", "panel", "terminal", 10));
+        contributions.addView(dev.forge.core.contrib.View.of("problems", "Problems", "panel", "warning", 20));
+        contributions.addView(dev.forge.core.contrib.View.of("tasks", "Tasks", "panel", "checklist", 30));
     }
 }

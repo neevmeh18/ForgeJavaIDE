@@ -1,7 +1,7 @@
 package dev.forge.infra;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
 import dev.forge.filesystem.FileSystem;
 import dev.forge.tasks.Task;
@@ -12,23 +12,23 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Tasks declared by the workspace itself, in {@code .forge/tasks.json}.
- *
- * <p>Read through the {@link FileSystem} capability rather than from a local path, so a
- * workspace on a remote host or in a container publishes its tasks the same way a local folder
- * does — the point of having a filesystem abstraction at all.
- *
- * <p>Shape:
- * <pre>
- * {
- *   "tasks": [
- *     {"id": "build", "name": "Build", "type": "build",
- *      "command": "mvn", "args": ["-B", "package"], "cwd": "", "shell": false}
- *   ]
- * }
- * </pre>
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 public final class WorkspaceTaskProvider implements TaskProvider {
 
     private static final Log log = Log.of(WorkspaceTaskProvider.class);
@@ -40,9 +40,9 @@ public final class WorkspaceTaskProvider implements TaskProvider {
     private static final int MAX_FIELD = 4096;
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final FileSystem.Locator locator;
+    private final dev.forge.filesystem.Locator locator;
 
-    public WorkspaceTaskProvider(FileSystem.Locator locator) {
+    public WorkspaceTaskProvider(dev.forge.filesystem.Locator locator) {
         this.locator = locator;
     }
 

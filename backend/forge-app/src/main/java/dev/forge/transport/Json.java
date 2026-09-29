@@ -14,26 +14,26 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 
-/**
- * JSON encoding, confined to the transport.
- *
- * <p>Jackson lives here and nowhere else. No feature, service or domain type carries a
- * serialisation annotation, so the wire format can change — or a second transport can use a
- * different one — without touching application code.
- *
- * <p>Identifier value types are written as plain strings rather than as
- * {@code {"value": "..."}}, so the wire stays readable and a client never has to know that
- * {@code WorkspaceId} is a record on the server.
- */
+
+
+
+
+
+
+
+
+
+
+
 public final class Json {
 
     private final ObjectMapper mapper;
 
     public Json() {
         SimpleModule identifiers = new SimpleModule("forge-identifiers");
-        identifiers.addSerializer(Ids.Id.class, new JsonSerializer<>() {
+        identifiers.addSerializer(dev.forge.core.Id.class, new JsonSerializer<>() {
             @Override
-            public void serialize(Ids.Id id, JsonGenerator generator, SerializerProvider provider)
+            public void serialize(dev.forge.core.Id id, JsonGenerator generator, SerializerProvider provider)
                     throws IOException {
                 generator.writeString(id.value());
             }
@@ -61,10 +61,10 @@ public final class Json {
         }
     }
 
-    /**
-     * Reads a request body into a plain map. Requests are never bound to typed classes here:
-     * arguments reach application code as {@code Args}, which validates them where they are used.
-     */
+
+
+
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> readObject(InputStream input) {
         try {

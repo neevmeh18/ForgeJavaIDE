@@ -1,13 +1,11 @@
+import type { BoundCommand } from "./keybindings/BoundCommand";
 import type { CommandRouter } from './commands';
 import type { Keybinding } from './protocol';
 
-/** Keystrokes to command ids, including the backend contribution's focus condition. */
+
 const MAC = /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
 
-interface BoundCommand {
-  command: string;
-  when?: string | null;
-}
+
 
 export class Keybindings {
   private bindings = new Map<string, BoundCommand>();
@@ -74,7 +72,7 @@ function matchesWhen(when: string | null | undefined, event: KeyboardEvent): boo
     const target = event.target instanceof Element ? event.target : document.activeElement;
     return Boolean(target?.closest('.editor-host, .monaco-editor'));
   }
-  // Unknown context expressions fail closed instead of accidentally broadening a shortcut.
+
   return false;
 }
 
@@ -95,3 +93,5 @@ function order(a: string, b: string): number {
   const rank = (part: string) => ['ctrl', 'shift', 'alt'].indexOf(part);
   return rank(b) - rank(a) || a.localeCompare(b);
 }
+
+export type { BoundCommand } from "./keybindings/BoundCommand";

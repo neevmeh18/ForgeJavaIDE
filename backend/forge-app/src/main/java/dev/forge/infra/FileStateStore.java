@@ -1,5 +1,6 @@
 package dev.forge.infra;
 
+import dev.forge.state.Scope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.forge.core.ForgeException;
 import dev.forge.core.Log;
@@ -13,7 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Small bounded JSON state store used by the single-node runtime. */
+
 public final class FileStateStore implements StateStore {
 
     private static final Log log = Log.of(FileStateStore.class);

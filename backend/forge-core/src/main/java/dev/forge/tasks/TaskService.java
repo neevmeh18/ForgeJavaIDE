@@ -2,9 +2,9 @@ package dev.forge.tasks;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.TaskExecutionId;
-import dev.forge.core.Ids.TerminalId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.TaskExecutionId;
+import dev.forge.core.TerminalId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -19,28 +19,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Discovers tasks and tracks their bounded lifecycle. */
-public final class TaskService implements Lifecycle.Component {
+
+public final class TaskService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(TaskService.class);
     private static final int MAX_RETAINED_EXECUTIONS_PER_WORKSPACE = 200;
 
-    public enum State { RUNNING, SUCCEEDED, FAILED, CANCELLED }
 
-    public record Execution(
-            TaskExecutionId id,
-            String taskId,
-            String name,
-            WorkspaceId workspaceId,
-            TerminalId terminalId,
-            State state,
-            int exitCode,
-            Instant startedAt) {
 
-        Execution finished(State newState, int code) {
-            return new Execution(id, taskId, name, workspaceId, terminalId, newState, code, startedAt);
-        }
-    }
+
 
     private final Map<TaskExecutionId, Execution> executions = new ConcurrentHashMap<>();
     private final Map<TerminalId, TaskExecutionId> byTerminal = new ConcurrentHashMap<>();
@@ -58,7 +45,7 @@ public final class TaskService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceEvents.WorkspaceClosed.class, event -> {
+        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceClosed.class, event -> {
             executions.values().removeIf(value -> {
                 if (!value.workspaceId().equals(event.workspaceId())) return false;
                 byTerminal.remove(value.terminalId());
@@ -66,7 +53,7 @@ public final class TaskService implements Lifecycle.Component {
                 return true;
             });
         }));
-        subscriptions.add(events.subscribe(TerminalEvents.TerminalExited.class,
+        subscriptions.add(events.subscribe(dev.forge.terminal.TerminalExited.class,
                 event -> finishTerminal(event.terminalId(), event.exitCode())));
     }
 
@@ -97,7 +84,7 @@ public final class TaskService implements Lifecycle.Component {
                 .findFirst()
                 .orElseThrow(() -> ForgeException.notFound("Unknown task: " + taskId).with("taskId", taskId));
 
-        TerminalService.TerminalInfo terminal = task.shell()
+        dev.forge.terminal.TerminalInfo terminal = task.shell()
                 ? terminals.run(workspace, "/bin/sh", List.of("-c", commandLine(task)), task.cwd(),
                         task.name(), task.env())
                 : terminals.run(workspace, task.executable(), task.arguments(), task.cwd(), task.name(), task.env());
@@ -108,10 +95,10 @@ public final class TaskService implements Lifecycle.Component {
         byTerminal.put(terminal.id(), execution.id());
         prune(workspace);
         log.with("workspaceId", workspace).with("taskId", task.id()).info("Task started");
-        events.publish(new TaskEvents.TaskStarted(workspace, execution.id(), task.id(), task.name()));
+        events.publish(new dev.forge.tasks.TaskStarted(workspace, execution.id(), task.id(), task.name()));
 
-        // A process such as `true` may exit before the mapping above exists. TerminalService
-        // retains a one-shot code so this check deterministically closes that race.
+
+
         var early = terminals.consumeExitCode(terminal.id());
         if (early.isPresent()) {
             finishTerminal(terminal.id(), early.getAsInt());
@@ -143,12 +130,12 @@ public final class TaskService implements Lifecycle.Component {
     private void finishTerminal(TerminalId terminalId, int exitCode) {
         TaskExecutionId id = byTerminal.remove(terminalId);
         if (id == null) {
-            // The process may have exited before run() installed the task mapping. Leave the
-            // one-shot exit code in TerminalService so run() can consume it immediately after
-            // registration and finish the task deterministically.
+
+
+
             return;
         }
-        terminals.consumeExitCode(terminalId); // the event path won; the cache is no longer needed
+        terminals.consumeExitCode(terminalId);
         Execution execution = executions.get(id);
         if (execution == null || execution.state() != State.RUNNING) {
             return;
@@ -160,7 +147,7 @@ public final class TaskService implements Lifecycle.Component {
         executions.put(id, finished);
         prune(finished.workspaceId());
         log.with("taskId", finished.taskId()).with("state", state).info("Task finished");
-        events.publish(new TaskEvents.TaskFinished(finished.workspaceId(), id, finished.taskId(),
+        events.publish(new dev.forge.tasks.TaskFinished(finished.workspaceId(), id, finished.taskId(),
                 state.name(), exitCode));
     }
 

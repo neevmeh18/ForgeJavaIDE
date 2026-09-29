@@ -17,18 +17,18 @@ import { SearchView } from './searchView';
 import { ExtensionsView, SettingsView } from './sidePanels';
 import { StatusBar } from './statusBar';
 
-/**
- * Assembles the workbench and owns the frontend's visual state.
- *
- * <p>The layout is conventional because it is the layout developers already know — activity bar,
- * sidebar, editor groups, panel, status bar. What is not conventional is how little it knows:
- * its menus, shortcuts and views are all fetched from the backend's contribution registry at
- * startup, and every interaction leaves through a command id.
- *
- * <p>This is also the composition root for the UI, the mirror of `ForgeApplication` on the Java
- * side: parts are constructed here, handed a {@link WorkbenchContext}, and never wired to each
- * other directly.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 export class Workbench implements WorkbenchContext {
   readonly client: ForgeClient;
   readonly commands: CommandRouter;
@@ -86,7 +86,7 @@ export class Workbench implements WorkbenchContext {
     this.render();
   }
 
-  // ---- WorkbenchContext ---------------------------------------------------------------
+
 
   on(type: string, handler: (event: ServerEvent) => void): () => void {
     const handlers = this.listeners.get(type) ?? new Set();
@@ -107,9 +107,9 @@ export class Workbench implements WorkbenchContext {
     await this.editors.open(path, line);
   }
 
-  // ---- startup ------------------------------------------------------------------------
 
-  /** Loads everything the workbench renders itself from, then opens a workspace. */
+
+
   async start(user: string): Promise<void> {
     this.state.user = user;
     this.statusBar.setUser(user);
@@ -135,8 +135,8 @@ export class Workbench implements WorkbenchContext {
     }
 
     this.keybindings.attach(document);
-    // An extension activated lazily contributes commands, menus and keybindings after startup,
-    // so the workbench re-reads the registries rather than showing a stale catalogue.
+
+
     this.on('extension.activated', () => void this.reloadContributions());
     this.on('extension.deactivated', () => void this.reloadContributions());
     this.on('settings.changed', () => void this.applySettings());
@@ -145,7 +145,7 @@ export class Workbench implements WorkbenchContext {
     this.showSidebarView('explorer');
   }
 
-  /** Re-reads the command catalogue and contribution registry and re-renders the chrome. */
+
   private async reloadContributions(): Promise<void> {
     try {
       const [commands, contributions] = await Promise.all([
@@ -161,7 +161,7 @@ export class Workbench implements WorkbenchContext {
       this.explorer.setContextMenu(contributions.menus);
       this.activityBar.setActive(this.activeView);
     } catch {
-      // A failed refresh leaves the previous catalogue in place, which is still usable.
+
     }
   }
 
@@ -172,8 +172,8 @@ export class Workbench implements WorkbenchContext {
         this.notify('warning', 'No workspaces were found under the configured workspace root');
         return;
       }
-      // The mounted root is what the developer asked for; subdirectories are offered as
-      // separate workspaces but should not win the first open by alphabetical accident.
+
+
       const root = available.find((workspace) => workspace.location.path === '');
       await this.openWorkspace((root ?? available[0]).id);
     } catch (error) {
@@ -192,7 +192,7 @@ export class Workbench implements WorkbenchContext {
       try {
         await this.commands.execute('workspace.close', { workspaceId: previous.id });
       } catch {
-        // The server may already have closed it; continue with a clean client state.
+
       }
       this.panel.resetWorkspace();
       this.search.resetWorkspace();
@@ -211,7 +211,7 @@ export class Workbench implements WorkbenchContext {
     } finally { this.switching = false; }
   }
 
-  /** Reads resolved settings and applies the handful the workbench renders with. */
+
   private async applySettings(): Promise<void> {
     try {
       const resolved = await this.client.query<ResolvedSetting[]>('settings.resolved');
@@ -229,7 +229,7 @@ export class Workbench implements WorkbenchContext {
     this.sidebar.style.width = `${Math.max(180, Math.min(600, width))}px`;
   }
 
-  // ---- layout -------------------------------------------------------------------------
+
 
   private render(): void {
     clear(this.root);
@@ -280,10 +280,10 @@ export class Workbench implements WorkbenchContext {
     this.editors.layout();
   }
 
-  /**
-   * Debugging has no adapter in this milestone; the view says so plainly instead of pretending.
-   * Breakpoints still work — they are workspace state, not adapter behaviour.
-   */
+
+
+
+
   private debugView(): HTMLElement {
     const view = el('div', { class: 'view debug-view' });
     view.append(
@@ -310,13 +310,13 @@ export class Workbench implements WorkbenchContext {
     return view;
   }
 
-  // ---- commands -----------------------------------------------------------------------
 
-  /**
-   * Presentation-only commands. They exist so that showing a view or toggling the panel is
-   * addressable by id like everything else — a menu, a keybinding or an extension can trigger
-   * them — without pretending that UI layout is application behaviour that belongs in Java.
-   */
+
+
+
+
+
+
   private registerLocalCommands(): void {
     const local = this.commands;
     local.registerInteractive('auth.logout', async () => {
@@ -417,13 +417,13 @@ export class Workbench implements WorkbenchContext {
       if (type) await this.client.command('debug.start', { type });
     });
     local.registerLocal('workbench.showLogs', 'Show Problems', 'View', () => this.panel.show('problems'));
-    // Contributed menus may address a view directly; the settings menu item does.
+
     local.registerLocal('workbench.view.settings', 'Open Settings', 'View', () =>
       this.showSidebarView('settings'),
     );
 
-    // Commands whose arguments only the UI knows. The ids stay canonical; the context is filled
-    // in here rather than duplicated into a second "save the editor" command.
+
+
     for (const id of ['editor.close', 'editor.format']) {
       local.provideArguments(id, () => {
         const documentId = this.editors.activeDocumentId();
@@ -431,7 +431,7 @@ export class Workbench implements WorkbenchContext {
       });
     }
 
-    // Saving and closing need the editor's content, so they route through it.
+
     local.registerLocal('workbench.save', 'Save', 'File', () => this.editors.saveActive());
     local.registerLocal('workbench.closeEditor', 'Close Editor', 'File', () => this.editors.closeActive());
     local.registerLocal('workbench.formatDocument', 'Format Document', 'Editor', () =>
@@ -439,11 +439,11 @@ export class Workbench implements WorkbenchContext {
     );
   }
 
-  /**
-   * The workbench's own shortcuts, plus the three backend bindings whose arguments come from
-   * the editor. Contributed bindings are already installed; these override the ones that need
-   * the editor's content.
-   */
+
+
+
+
+
   private bindWorkbenchShortcuts(): void {
     this.keybindings.bind('ctrl+shift+p', 'workbench.commandPalette');
     this.keybindings.bind('ctrl+p', 'workbench.quickOpen');
@@ -478,8 +478,8 @@ export class Workbench implements WorkbenchContext {
       window.location.reload();
     }
     if (event.type === 'workspace.closed' && event.workspaceId === this.client.currentWorkspace) {
-      // The workspace header must stop naming a workspace that no longer exists, or every
-      // subsequent request fails with NOT_FOUND until the page is reloaded.
+
+
       this.client.setWorkspace(null);
       this.state.workspace = null;
       this.statusBar.setWorkspace(null);
@@ -492,7 +492,7 @@ export class Workbench implements WorkbenchContext {
     }
   }
 
-  /** Called by the current view id; used by the activity bar's toggle shortcut. */
+
   currentView(): string {
     return this.activeView;
   }

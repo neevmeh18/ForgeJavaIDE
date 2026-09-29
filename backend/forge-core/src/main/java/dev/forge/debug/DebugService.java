@@ -2,18 +2,18 @@ package dev.forge.debug;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
-import dev.forge.core.Ids.DebugSessionId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.DebugSessionId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
-import dev.forge.debug.DebugTypes.Breakpoint;
-import dev.forge.debug.DebugTypes.DebugConfiguration;
-import dev.forge.debug.DebugTypes.SessionInfo;
-import dev.forge.debug.DebugTypes.SessionState;
-import dev.forge.debug.DebugTypes.StackFrame;
-import dev.forge.debug.DebugTypes.ThreadInfo;
-import dev.forge.debug.DebugTypes.Variable;
+import dev.forge.debug.Breakpoint;
+import dev.forge.debug.DebugConfiguration;
+import dev.forge.debug.SessionInfo;
+import dev.forge.debug.SessionState;
+import dev.forge.debug.StackFrame;
+import dev.forge.debug.ThreadInfo;
+import dev.forge.debug.Variable;
 import dev.forge.filesystem.Resource;
 import dev.forge.workspace.WorkspaceEvents;
 import java.util.ArrayList;
@@ -23,19 +23,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Debug session and breakpoint coordination.
- *
- * <p>Breakpoints live here, per workspace, independently of any session: you set them before
- * starting a debuggee and they survive it ending. Sessions are routed to whichever
- * {@link DebugAdapter} handles the configuration's type — so adding support for a new runtime
- * is registering an adapter, not editing this class.
- *
- * <p>No adapter ships with the framework today; {@code debug.start} reports {@code UNSUPPORTED}
- * with the requested type until a product or extension registers one. Breakpoint management
- * works regardless, because it is workspace state rather than adapter behaviour.
- */
-public final class DebugService implements Lifecycle.Component {
+
+
+
+
+
+
+
+
+
+
+
+
+public final class DebugService implements dev.forge.core.Component {
 
     private static final Log log = Log.of(DebugService.class);
     private static final int MAX_BREAKPOINTS_PER_WORKSPACE = 500;
@@ -57,7 +57,7 @@ public final class DebugService implements Lifecycle.Component {
 
     @Override
     public void start() {
-        subscriptions.add(events.subscribe(WorkspaceEvents.WorkspaceClosed.class, event -> {
+        subscriptions.add(events.subscribe(dev.forge.workspace.WorkspaceClosed.class, event -> {
             breakpoints.remove(event.workspaceId());
             sessions.values().stream()
                     .filter(active -> active.workspace().equals(event.workspaceId()))
@@ -72,7 +72,7 @@ public final class DebugService implements Lifecycle.Component {
         List.copyOf(sessions.values()).forEach(active -> stop(active.id(), active.workspace()));
     }
 
-    public Lifecycle.Disposable register(DebugAdapter adapter) {
+    public dev.forge.core.Disposable register(DebugAdapter adapter) {
         adapters.put(adapter.type(), adapter);
         log.with("adapter", adapter.type()).info("Debug adapter registered");
         return () -> adapters.remove(adapter.type(), adapter);
@@ -104,7 +104,7 @@ public final class DebugService implements Lifecycle.Component {
         }
 
         log.with("workspaceId", workspace).with("debugSessionId", id).info("Debug session started");
-        events.publish(new DebugEvents.DebugSessionStarted(workspace, id, configuration.name(),
+        events.publish(new dev.forge.debug.DebugSessionStarted(workspace, id, configuration.name(),
                 configuration.type()));
         return info;
     }
@@ -117,7 +117,7 @@ public final class DebugService implements Lifecycle.Component {
         } catch (RuntimeException e) {
             log.with("debugSessionId", id).warn("Debug adapter stop failed", e);
         }
-        events.publish(new DebugEvents.DebugSessionEnded(workspace, id, 0));
+        events.publish(new dev.forge.debug.DebugSessionEnded(workspace, id, 0));
     }
 
     public void resume(DebugSessionId id, WorkspaceId workspace, int threadId) {
@@ -161,7 +161,7 @@ public final class DebugService implements Lifecycle.Component {
                 .toList();
     }
 
-    /** Whether any session is live — the availability condition behind {@code debug.stop}. */
+
     public boolean hasActiveSession(WorkspaceId workspace) {
         return sessions.values().stream().anyMatch(active -> active.workspace().equals(workspace));
     }
@@ -170,7 +170,7 @@ public final class DebugService implements Lifecycle.Component {
         return List.copyOf(breakpoints.getOrDefault(workspace, List.of()));
     }
 
-    /** Toggles a breakpoint at a line, returning the workspace's full set for that file. */
+
     public synchronized List<Breakpoint> toggleBreakpoint(WorkspaceId workspace, String rawPath, int line, String condition) {
         if (line < 1 || line > 10_000_000 || (condition != null && condition.length() > 4096))
             throw ForgeException.invalidArgument("Invalid breakpoint");
@@ -195,7 +195,7 @@ public final class DebugService implements Lifecycle.Component {
         sessions.values().stream()
                 .filter(active -> active.workspace().equals(workspace))
                 .forEach(active -> active.adapter().setBreakpoints(active.id(), path, forPath));
-        events.publish(new DebugEvents.BreakpointsChanged(workspace, path, forPath));
+        events.publish(new dev.forge.debug.BreakpointsChanged(workspace, path, forPath));
         return forPath;
     }
 
@@ -204,30 +204,30 @@ public final class DebugService implements Lifecycle.Component {
                 .collect(java.util.stream.Collectors.groupingBy(Breakpoint::path));
     }
 
-    private DebugAdapter.Listener listener(WorkspaceId workspace) {
-        return new DebugAdapter.Listener() {
+    private dev.forge.debug.Listener listener(WorkspaceId workspace) {
+        return new dev.forge.debug.Listener() {
             @Override
             public void stopped(DebugSessionId session, int threadId, String reason) {
                 transition(session, workspace, SessionState.STOPPED);
-                events.publish(new DebugEvents.DebugStopped(workspace, session, threadId, bounded(reason, MAX_DEBUG_TEXT_CHARS)));
+                events.publish(new dev.forge.debug.DebugStopped(workspace, session, threadId, bounded(reason, MAX_DEBUG_TEXT_CHARS)));
             }
 
             @Override
             public void continued(DebugSessionId session, int threadId) {
                 transition(session, workspace, SessionState.RUNNING);
-                events.publish(new DebugEvents.DebugContinued(workspace, session, threadId));
+                events.publish(new dev.forge.debug.DebugContinued(workspace, session, threadId));
             }
 
             @Override
             public void output(DebugSessionId session, String category, String text) {
-                events.publish(new DebugEvents.DebugOutput(workspace, session, bounded(category, 128), bounded(text, MAX_DEBUG_OUTPUT_CHARS)));
+                events.publish(new dev.forge.debug.DebugOutput(workspace, session, bounded(category, 128), bounded(text, MAX_DEBUG_OUTPUT_CHARS)));
             }
 
             @Override
             public void terminated(DebugSessionId session, int exitCode) {
                 Active active = sessions.get(session);
                 if (active == null || !active.workspace().equals(workspace) || !sessions.remove(session, active)) return;
-                events.publish(new DebugEvents.DebugSessionEnded(workspace, session, exitCode));
+                events.publish(new dev.forge.debug.DebugSessionEnded(workspace, session, exitCode));
             }
         };
     }

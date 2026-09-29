@@ -1,7 +1,7 @@
 package dev.forge.transport;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.SessionId;
+import dev.forge.core.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.Event;
@@ -16,15 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiPredicate;
 
-/** Bounded, visibility-filtered server-sent event fan-out. */
-public final class EventStream implements Lifecycle.Component {
+
+public final class EventStream implements dev.forge.core.Component {
 
     private static final Log log = Log.of(EventStream.class);
     private static final int QUEUE_CAPACITY = 2048;
 
     private record Frame(String type, String workspaceId, Object payload) { }
 
-    public final class Client implements Lifecycle.Disposable {
+    public final class Client implements dev.forge.core.Disposable {
         private final SessionId session;
         private final BlockingQueue<String> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
         private final AtomicBoolean disposed = new AtomicBoolean();
@@ -55,8 +55,8 @@ public final class EventStream implements Lifecycle.Component {
             }
             queuedChars += frame.length();
             if (!queue.offer(frame)) {
-                // Never silently pretend delivery is reliable. Drop old data, then explicitly
-                // tell the client to refresh authoritative state.
+
+
                 queue.clear();
                 queuedChars = frame.length();
                 overflowed = true;
@@ -102,7 +102,7 @@ public final class EventStream implements Lifecycle.Component {
     @Override
     public void start() {
         subscriptions.add(events.subscribeAll(this::dispatch));
-        subscriptions.add(events.subscribe(dev.forge.auth.AuthEvents.SessionEnded.class, event ->
+        subscriptions.add(events.subscribe(dev.forge.auth.SessionEnded.class, event ->
                 java.util.List.copyOf(clients).stream().filter(client -> client.session.equals(event.sessionId())).forEach(Client::dispose)));
     }
 

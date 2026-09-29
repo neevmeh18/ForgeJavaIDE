@@ -1,14 +1,16 @@
-/**
- * Small DOM helpers.
- *
- * <p>The workbench renders with plain DOM rather than a UI framework: the tree is shallow, the
- * updates are event-driven, and a framework would be a large dependency for the framework's own
- * shell — which products are expected to replace anyway. These few functions are all the
- * ergonomics that needs.
- */
+import type { Attributes } from "./dom/Attributes";
+import type { Child } from "./dom/Child";
 
-type Attributes = Record<string, string | number | boolean | undefined>;
-type Child = Node | string | null | undefined | false;
+
+
+
+
+
+
+
+
+
+
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -47,7 +49,7 @@ export function clear(node: Element): void {
   }
 }
 
-/** A named glyph. Kept as text so the workbench ships no icon font or sprite sheet. */
+
 export function icon(name: string): HTMLElement {
   const glyphs: Record<string, string> = {
     files: '🗀',
@@ -69,3 +71,6 @@ export function icon(name: string): HTMLElement {
 export function fileIcon(directory: boolean): HTMLElement {
   return el('span', { class: 'icon', text: directory ? '🗀' : '🗎', 'aria-hidden': 'true' });
 }
+
+export type { Attributes } from "./dom/Attributes";
+export type { Child } from "./dom/Child";

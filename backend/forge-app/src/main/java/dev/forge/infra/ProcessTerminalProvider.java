@@ -1,8 +1,9 @@
 package dev.forge.infra;
 
+import dev.forge.terminal.Spec;
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.TerminalId;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.TerminalId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
 import dev.forge.terminal.TerminalProvider;
 import dev.forge.terminal.TerminalSession;
@@ -17,19 +18,19 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
-/**
- * Terminals as child processes of the backend.
- *
- * <p>No pseudo-terminal: that would mean a native dependency, and the framework's dependency
- * policy says a library must earn its place. The practical consequence is honest and documented
- * — line-oriented shells, task output and build logs work; full-screen curses programs and job
- * control do not. A product that needs them registers a PTY-backed {@link TerminalProvider}
- * instead, and nothing above the interface changes.
- *
- * <p><b>Environment hygiene.</b> The child does not inherit the server's environment. It is
- * given a small, explicit set of variables, so the IDE's own configuration — including
- * {@code IDE_AUTH_PASSWORD} — is not passed to child processes. Same-UID processes are trusted code and are not a security sandbox.
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
 public final class ProcessTerminalProvider implements TerminalProvider {
 
     private static final Log log = Log.of(ProcessTerminalProvider.class);
@@ -86,7 +87,7 @@ public final class ProcessTerminalProvider implements TerminalProvider {
         return new ProcessSession(spec.id(), spec.workspace(), process);
     }
 
-    /** The service already normalised the path; this maps it onto the real directory. */
+
     private Path resolveWorkingDirectory(Spec spec) {
         Path base = workspaces.directory(spec.workspace())
                 .orElseThrow(() -> ForgeException.unavailable("Workspace is not open locally"));
@@ -113,7 +114,7 @@ public final class ProcessTerminalProvider implements TerminalProvider {
                 }
             }
         } catch (IOException e) {
-            // The stream closes when the process ends; the exit callback reports that.
+
             log.debug("Terminal output stream closed");
         }
     }
@@ -134,8 +135,8 @@ public final class ProcessTerminalProvider implements TerminalProvider {
 
         @Override
         public void resize(int columns, int rows) {
-            // Without a pseudo-terminal there is no window size to set. Accepted and ignored so
-            // that clients need not special-case this provider.
+
+
         }
 
         @Override

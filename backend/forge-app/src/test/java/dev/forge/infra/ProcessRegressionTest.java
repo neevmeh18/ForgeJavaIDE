@@ -18,8 +18,8 @@ public class ProcessRegressionTest {
 
     @Test public void passwordAcceptsConfiguredSecretAndRejectsWrongSecret() {
         var provider = new PasswordAuthenticationProvider("user", "unit-test-secret-only");
-        var valid = new AuthenticationProvider.Credentials("user", "unit-test-secret-only".toCharArray(), Map.of());
-        var invalid = new AuthenticationProvider.Credentials("user", "incorrect".toCharArray(), Map.of());
+        var valid = new dev.forge.auth.Credentials("user", "unit-test-secret-only".toCharArray(), Map.of());
+        var invalid = new dev.forge.auth.Credentials("user", "incorrect".toCharArray(), Map.of());
         try { assertTrue(provider.authenticate(valid).isPresent()); assertTrue(provider.authenticate(invalid).isEmpty()); }
         finally { valid.wipe(); invalid.wipe(); }
     }
@@ -37,8 +37,8 @@ public class ProcessRegressionTest {
         var tasks = new TaskService(List.of(taskProvider), terminals, events); terminals.start(); tasks.start();
         try {
             var task = tasks.run(workspace.id(), "hello");
-            await(() -> tasks.require(task.id(), workspace.id()).state() != TaskService.State.RUNNING);
-            assertEquals(TaskService.State.SUCCEEDED, tasks.require(task.id(), workspace.id()).state());
+            await(() -> tasks.require(task.id(), workspace.id()).state() != dev.forge.tasks.State.RUNNING);
+            assertEquals(dev.forge.tasks.State.SUCCEEDED, tasks.require(task.id(), workspace.id()).state());
             assertTrue(terminals.scrollback(task.terminalId(), workspace.id()).contains("hello"));
             var pwd = terminals.run(workspace.id(), "/bin/pwd", List.of(), "", "pwd", Map.of());
             await(() -> terminals.consumeExitCode(pwd.id()).isPresent());

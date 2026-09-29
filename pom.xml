@@ -11,10 +11,7 @@
   <name>Forge IDE Framework</name>
   <description>A Java-first, extensible framework for building IDE products.</description>
 
-  <!--
-    Java baseline for the whole project. Docker, local builds and any CI must use
-    this single value; see docs/ARCHITECTURE.md ("One Java baseline").
-  -->
+
   <properties>
     <java.version>21</java.version>
     <maven.compiler.release>${java.version}</maven.compiler.release>

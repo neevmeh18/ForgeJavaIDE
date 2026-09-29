@@ -1,20 +1,20 @@
 package dev.forge.filesystem;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 
-/**
- * A file or directory, identified by workspace plus a workspace-relative path.
- *
- * <p>Deliberately not a {@code java.io.File}, a {@code Path} or a URL. Features exchange
- * {@code Resource} values, and only the filesystem provider behind a workspace knows whether
- * that resolves to a local directory, a container volume, an SSH host or object storage.
- *
- * <p><b>Security:</b> normalisation happens here, once, at construction. Segments are checked
- * for traversal ({@code ..}), absolute roots, backslashes, NUL bytes and Windows drive letters,
- * so no later code has to remember to sanitise. A provider still re-checks the resolved real
- * path before touching anything — this is the first line of defence, not the only one.
- */
+
+
+
+
+
+
+
+
+
+
+
+
 public record Resource(WorkspaceId workspace, String path) {
 
     private static final int MAX_PATH_LENGTH = 4096;
@@ -27,7 +27,7 @@ public record Resource(WorkspaceId workspace, String path) {
         return new Resource(workspace, path);
     }
 
-    /** The workspace root itself. */
+
     public static Resource root(WorkspaceId workspace) {
         return new Resource(workspace, "");
     }
@@ -36,7 +36,7 @@ public record Resource(WorkspaceId workspace, String path) {
         return path.isEmpty();
     }
 
-    /** Last path segment, or the empty string at the root. */
+
     public String name() {
         int slash = path.lastIndexOf('/');
         return slash < 0 ? path : path.substring(slash + 1);
@@ -51,7 +51,7 @@ public record Resource(WorkspaceId workspace, String path) {
         return new Resource(workspace, path.isEmpty() ? segment : path + "/" + segment);
     }
 
-    /** Sibling with a different final segment — the shape {@code file.rename} needs. */
+
     public Resource withName(String newName) {
         if (newName.isBlank() || newName.contains("/") || newName.contains("\\")
                 || newName.equals(".") || newName.equals("..")) {

@@ -11,28 +11,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/** Runs one bounded non-interactive child process, currently used by Git. */
+
 final class Processes {
 
     private static final Log log = Log.of(Processes.class);
     private static final java.util.concurrent.Semaphore SLOTS = new java.util.concurrent.Semaphore(8);
     private static final int MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
-    record Result(int exitCode, String output) {
-        boolean ok() {
-            return exitCode == 0;
-        }
 
-        String orThrow(String what) {
-            if (!ok()) {
-                log.debug("External operation failed: " + what);
-                throw ForgeException.conflict(what + " failed; check repository state and server logs");
-            }
-            return output;
-        }
-
-
-    }
 
     private Processes() { }
 
@@ -113,7 +99,7 @@ final class Processes {
                 retained += copy;
             }
         } catch (IOException ignored) {
-            // Process termination closes the stream.
+
         }
     }
 
@@ -122,7 +108,7 @@ final class Processes {
             try {
                 handle.destroyForcibly();
             } catch (RuntimeException ignored) {
-                // Best effort.
+
             }
         });
         process.destroyForcibly();

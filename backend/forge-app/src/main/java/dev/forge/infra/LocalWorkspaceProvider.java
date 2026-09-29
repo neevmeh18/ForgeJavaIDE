@@ -1,7 +1,7 @@
 package dev.forge.infra;
 
 import dev.forge.core.ForgeException;
-import dev.forge.core.Ids.WorkspaceId;
+import dev.forge.core.WorkspaceId;
 import dev.forge.core.Log;
 import dev.forge.filesystem.FileSystem;
 import dev.forge.workspace.Workspace;
@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Workspaces backed by real directories immediately under {@code IDE_WORKSPACE_ROOT}. */
+
 public final class LocalWorkspaceProvider implements WorkspaceProvider {
 
     private static final Log log = Log.of(LocalWorkspaceProvider.class);
@@ -170,9 +170,9 @@ public final class LocalWorkspaceProvider implements WorkspaceProvider {
         String relative = root.equals(normalized) ? "" : root.relativize(normalized).toString();
         String name = relative.isEmpty() ? nameOfRoot() : normalized.getFileName().toString();
         return new Workspace(identify(relative), name,
-                new Workspace.Location(SCHEME, "", relative.replace('\\', '/')),
+                new dev.forge.workspace.Location(SCHEME, "", relative.replace('\\', '/')),
                 Map.of("readOnly", String.valueOf(!Files.isWritable(normalized))),
-                Workspace.State.AVAILABLE, null);
+                dev.forge.workspace.State.AVAILABLE, null);
     }
 
     private String nameOfRoot() {

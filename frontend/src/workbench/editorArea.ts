@@ -1,3 +1,9 @@
+import type { OpenTab } from "./editorArea/OpenTab";
+import type { Group } from "./editorArea/Group";
+import type { Range } from "./editorArea/Range";
+import type { TextEdit } from "./editorArea/TextEdit";
+import type { Diagnostic } from "./editorArea/Diagnostic";
+import type { CompletionItem } from "./editorArea/CompletionItem";
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import 'monaco-editor/esm/vs/editor/editor.all.js';
 import 'monaco-editor/esm/vs/basic-languages/monaco.contribution';
@@ -7,43 +13,28 @@ import type { OpenDocument } from '../forge/protocol';
 import { clear, el, icon } from './dom';
 import { describeError as describe } from '../forge/client';
 
-/**
- * Editor groups, tabs and the Monaco integration.
- *
- * <p>This is the only file in the repository that knows Monaco exists. Everything it learns from
- * the editor — text, cursor position, a request for completions — is turned into a framework
- * command or query before it leaves; everything it shows comes back the same way. Swapping the
- * editor component is a change to this file alone, and the Java side would not notice.
- *
- * <p>Editor groups and tab layout are frontend state on purpose. The backend owns document
- * identity, contents and dirty state — the things two sessions must agree on — while how those
- * documents are arranged on one screen is presentation and differs per client.
- */
 
-// Monaco needs a worker for tokenisation and its editing services. Vite compiles it as a
-// same-origin module worker, which is what the backend's Content-Security-Policy permits.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
 
-interface OpenTab {
-  workspaceGeneration: number;
-  documentId: string;
-  path: string;
-  model: monaco.editor.ITextModel;
-  version: number;
-  dirty: boolean;
-  viewState: monaco.editor.ICodeEditorViewState | null;
-}
 
-interface Group {
-  readonly container: HTMLElement;
-  readonly tabBar: HTMLElement;
-  readonly host: HTMLElement;
-  readonly editor: monaco.editor.IStandaloneCodeEditor;
-  tabs: OpenTab[];
-  active: string | null;
-}
+
+
 
 export class EditorArea {
   readonly element = el('div', { class: 'editor-area' });
@@ -127,7 +118,7 @@ export class EditorArea {
     });
   }
 
-  /** Splits the editor area. A second group is as far as the first milestone goes. */
+
   split(): void {
     if (this.groups.length >= 2) {
       return;
@@ -172,7 +163,7 @@ export class EditorArea {
     this.activate(group, tab.documentId, line);
   }
 
-  /** Saves the active versioned editor buffer without bypassing conflict detection. */
+
   async saveActive(): Promise<void> {
     const group = this.groups[this.activeGroup];
     const tab = group ? this.tabOf(group, group.active) : null;
@@ -213,7 +204,7 @@ export class EditorArea {
     }
   }
 
-  /** Applies the edits `editor.format` returned. Computing them was the backend's job. */
+
   async formatActive(): Promise<void> {
     const group = this.groups[this.activeGroup];
     const tab = group ? this.tabOf(group, group.active) : null;
@@ -290,7 +281,7 @@ export class EditorArea {
     monaco.editor.setTheme(theme === 'light' ? 'vs' : 'vs-dark');
   }
 
-  // ---- internals ----------------------------------------------------------------------
+
 
   private ensureGroup(): Group {
     if (this.groups.length === 0) {
@@ -401,7 +392,7 @@ export class EditorArea {
     try {
       await this.ctx.commands.execute('editor.close', { documentId });
     } catch {
-      // Closing is best-effort: the buffer may already be gone on the backend.
+
     }
     window.clearTimeout(this.syncTimers.get(documentId));
     window.clearTimeout(this.autoSaveTimers.get(documentId));
@@ -454,10 +445,10 @@ export class EditorArea {
     });
   }
 
-  /**
-   * Pushes the working copy into the shared backend buffer, debounced. This is what makes
-   * language tooling see what the user actually typed rather than the file on disk.
-   */
+
+
+
+
   private onLocalEdit(tab: OpenTab): void {
     if (this.applyingRemote.has(tab.documentId)) return;
     tab.dirty = true;
@@ -534,10 +525,10 @@ export class EditorArea {
     });
   }
 
-  /**
-   * Bridges Monaco's providers to the framework's language queries. Monaco asks; the backend
-   * answers; no language knowledge is implemented here.
-   */
+
+
+
+
   private registerLanguageBridge(): void {
     monaco.languages.registerCompletionItemProvider('*', {
       provideCompletionItems: async (model, position) => {
@@ -595,30 +586,13 @@ export class EditorArea {
   }
 }
 
-interface Range {
-  start: { line: number; character: number };
-  end: { line: number; character: number };
-}
 
-interface TextEdit {
-  range: Range;
-  newText: string;
-}
 
-interface Diagnostic {
-  range: Range;
-  severity: 'ERROR' | 'WARNING' | 'INFORMATION' | 'HINT';
-  message: string;
-  source: string | null;
-  code: string | null;
-}
 
-interface CompletionItem {
-  label: string;
-  detail: string | null;
-  documentation: string | null;
-  insertText: string | null;
-}
+
+
+
+
 
 function toRange(range: Range): monaco.Range {
   return new monaco.Range(
@@ -651,7 +625,7 @@ function severityOf(severity: Diagnostic['severity']): monaco.MarkerSeverity {
   }
 }
 
-/** The backend's language ids mostly match Monaco's; the few that differ are mapped here. */
+
 function monacoLanguage(languageId: string): string {
   const aliases: Record<string, string> = {
     typescriptreact: 'typescript',
@@ -666,3 +640,10 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 }
+
+export type { OpenTab } from "./editorArea/OpenTab";
+export type { Group } from "./editorArea/Group";
+export type { Range } from "./editorArea/Range";
+export type { TextEdit } from "./editorArea/TextEdit";
+export type { Diagnostic } from "./editorArea/Diagnostic";
+export type { CompletionItem } from "./editorArea/CompletionItem";

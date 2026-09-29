@@ -5,7 +5,7 @@ import dev.forge.core.Log;
 import java.nio.file.Path;
 import java.time.Duration;
 
-/** Deployment configuration, read once from the environment. */
+
 public record Config(
         String host,
         int port,
@@ -37,7 +37,7 @@ public record Config(
 
     private static final Log log = Log.of(Config.class);
 
-    /** Former default, now explicitly rejected. */
+
     public static final String DEVELOPMENT_PASSWORD = "forge";
 
     public static Config fromEnvironment() {
@@ -73,7 +73,7 @@ public record Config(
                 boundedIntEnv("IDE_MAX_TRAVERSAL_ENTRIES", 100000, 1000, 1000000));
     }
 
-    /** Refuses the dangerous combination that previously made the development credential remote. */
+
     public void validateSecurityDefaults() {
         if (authPassword == null || authPassword.length() < 12 || DEVELOPMENT_PASSWORD.equals(authPassword)) {
             throw ForgeException.invalidArgument("Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");

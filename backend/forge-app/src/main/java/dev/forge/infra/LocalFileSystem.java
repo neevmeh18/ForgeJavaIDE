@@ -1,7 +1,11 @@
 package dev.forge.infra;
 
+import dev.forge.filesystem.Stat;
+import dev.forge.filesystem.Entry;
+import dev.forge.filesystem.Change;
+import dev.forge.filesystem.ChangeKind;
 import dev.forge.core.ForgeException;
-import dev.forge.core.Lifecycle.Disposable;
+import dev.forge.core.Disposable;
 import dev.forge.core.Log;
 import dev.forge.filesystem.FileSystem;
 import java.io.IOException;
@@ -28,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-/** Local, workspace-rooted filesystem with physical containment and resource bounds. */
+
 public final class LocalFileSystem implements FileSystem {
 
     private static final Log log = Log.of(LocalFileSystem.class);
@@ -345,7 +349,7 @@ public final class LocalFileSystem implements FileSystem {
             try {
                 service.close();
             } catch (IOException ignored) {
-                // Already gone.
+
             }
         };
     }
@@ -380,7 +384,7 @@ public final class LocalFileSystem implements FileSystem {
                 if (recursive && isDirectory && event.kind() == StandardWatchEventKinds.ENTRY_CREATE) {
                     registerRecursively(service, changed, keys, true);
                 }
-                // Delete events must not call toRealPath(): the file is already gone.
+
                 listener.accept(new Change(kindOf(event.kind()), relative(changed), isDirectory));
             }
             if (!key.reset()) {

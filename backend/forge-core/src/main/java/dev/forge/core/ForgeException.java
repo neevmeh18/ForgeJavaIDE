@@ -2,29 +2,19 @@ package dev.forge.core;
 
 import java.util.Map;
 
-/**
- * The framework's structured failure type.
- *
- * <p>Failures are never signalled with {@code null}, {@code false} or a bare string. Every
- * failure carries a machine-readable {@link Code} that transports can translate (to an HTTP
- * status, a JSON-RPC error, a CLI exit code) without inspecting the message text.
- *
- * <p>The {@link #details()} map is for structured, <em>non-sensitive</em> context that helps a
- * caller react (which resource, which command). Stack traces never cross a transport boundary.
- */
+
+
+
+
+
+
+
+
+
+
 public class ForgeException extends RuntimeException {
 
-    public enum Code {
-        NOT_FOUND,
-        INVALID_ARGUMENT,
-        CONFLICT,
-        UNAUTHORIZED,
-        FORBIDDEN,
-        UNAVAILABLE,
-        UNSUPPORTED,
-        CANCELLED,
-        INTERNAL_FAILURE
-    }
+
 
     private final Code code;
     private final Map<String, String> details;
@@ -85,11 +75,11 @@ public class ForgeException extends RuntimeException {
         return new ForgeException(Code.INTERNAL_FAILURE, message, null, cause);
     }
 
-    /**
-     * Normalises an arbitrary throwable into a {@code ForgeException}. Unknown failures become
-     * {@code INTERNAL_FAILURE} with a generic message: the original is kept as the cause for
-     * server-side logging but its text is not promoted into something a client will read.
-     */
+
+
+
+
+
     public static ForgeException normalize(Throwable t) {
         Throwable unwrapped = t;
         while ((unwrapped instanceof java.util.concurrent.CompletionException

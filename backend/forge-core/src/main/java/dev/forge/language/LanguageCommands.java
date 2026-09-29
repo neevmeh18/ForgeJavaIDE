@@ -5,17 +5,17 @@ import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.query.QueryRegistry;
-import dev.forge.core.query.QueryRegistry.QueryDescriptor;
-import dev.forge.language.LanguageTypes.Position;
-import dev.forge.language.LanguageTypes.Range;
+import dev.forge.core.query.QueryDescriptor;
+import dev.forge.language.Position;
+import dev.forge.language.Range;
 
-/**
- * {@code language.*} queries and the rename command.
- *
- * <p>Completion, hover, definition and friends are queries: they read, they are cheap, and they
- * happen on every keystroke. Rename is a command — it produces edits that change the workspace,
- * so it belongs in the pipeline that logs, authorises and can refuse.
- */
+
+
+
+
+
+
+
 public final class LanguageCommands {
 
     private final LanguageService languages;
@@ -61,16 +61,16 @@ public final class LanguageCommands {
                 (ctx, args) -> languages.supportedLanguages());
 
         commands.register(
-                CommandDescriptor.of("language.rename", "Language", "Rename Symbol") .withArguments(new CommandDescriptor.Argument("documentId", "string", "documentId"), new CommandDescriptor.Argument("position", "object", "position"), new CommandDescriptor.Argument("newName", "string", "newName"))
+                CommandDescriptor.of("language.rename", "Language", "Rename Symbol") .withArguments(new dev.forge.core.command.Argument("documentId", "string", "documentId"), new dev.forge.core.command.Argument("position", "object", "position"), new dev.forge.core.command.Argument("newName", "string", "newName"))
                         .describedAs("Computes the edits that rename a symbol across the workspace")
                         .workspaceScoped(),
                 ctx -> languages.rename(ctx.requireWorkspace(), owned(ctx.request(), ctx.args()),
                         position(ctx.args()), ctx.args().requiredString("newName")).orElse(null));
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("f2", "workbench.renameSymbol", "editorFocus"));
+        contributions.addKeybinding(dev.forge.core.contrib.Keybinding.of("f2", "workbench.renameSymbol", "editorFocus"));
     }
 
-    private dev.forge.core.Ids.DocumentId owned(dev.forge.core.RequestContext ctx, Args args) {
+    private dev.forge.core.DocumentId owned(dev.forge.core.RequestContext ctx, Args args) {
         var id = args.documentId("documentId");
         editors.document(id, ctx.requireWorkspace(), ctx.sessionId());
         return id;
