@@ -138,6 +138,15 @@ public final class EditorService implements Lifecycle.Component {
                 .toList();
     }
 
+    /** Dirty buffers retained for a workspace, including documents with no current viewers. */
+    public List<Document> unsavedDocumentsFor(WorkspaceId workspace) {
+        return buffers.values().stream()
+                .map(buffer -> buffer.document)
+                .filter(document -> document.workspaceId().equals(workspace) && document.dirty())
+                .sorted(java.util.Comparator.comparing(Document::path))
+                .toList();
+    }
+
     /**
      * Removes one session's view. The buffer survives while other sessions hold it open, and
      * a dirty buffer is kept even with no viewers so unsaved work is not silently discarded.

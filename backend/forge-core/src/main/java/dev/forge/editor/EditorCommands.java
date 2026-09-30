@@ -49,6 +49,11 @@ public final class EditorCommands {
                 (ctx, args) -> editors.documentsFor(ctx.requireWorkspace(), ctx.sessionId()));
 
         queries.register(
+                QueryDescriptor.of("editor.unsavedDocuments", "Dirty documents retained for this workspace")
+                        .workspaceScoped(),
+                (ctx, args) -> editors.unsavedDocumentsFor(ctx.requireWorkspace()));
+
+        queries.register(
                 QueryDescriptor.of("editor.document", "One open document's metadata and text").workspaceScoped(),
                 (ctx, args) -> {
                     DocumentId id = args.documentId("documentId");

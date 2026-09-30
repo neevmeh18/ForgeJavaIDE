@@ -16,6 +16,7 @@ import { ScmView } from './scmView';
 import { SearchView } from './searchView';
 import { ExtensionsView, SettingsView } from './sidePanels';
 import { StatusBar } from './statusBar';
+import { UnsavedChangesView } from './unsavedChangesView';
 
 /**
  * Assembles the workbench and owns the frontend's visual state.
@@ -57,6 +58,7 @@ export class Workbench implements WorkbenchContext {
   private readonly scm: ScmView;
   private readonly extensions: ExtensionsView;
   private readonly settings: SettingsView;
+  private readonly unsavedChanges: UnsavedChangesView;
   private activeView = 'explorer';
 
   constructor(
@@ -79,6 +81,7 @@ export class Workbench implements WorkbenchContext {
     this.scm = new ScmView(this);
     this.extensions = new ExtensionsView(this);
     this.settings = new SettingsView(this);
+    this.unsavedChanges = new UnsavedChangesView(this);
 
     client.onEvent((event) => this.fanOut(event));
     this.registerLocalCommands();
@@ -223,9 +226,14 @@ export class Workbench implements WorkbenchContext {
   }
 
   private showSidebarView(viewId: string): void {
+    this.unsavedChanges.setVisible(false);
     this.activeView = viewId;
     clear(this.sidebar);
     switch (viewId) {
+      case 'unsaved-changes':
+        this.sidebar.append(this.unsavedChanges.element);
+        this.unsavedChanges.setVisible(true);
+        break;
       case 'search':
         this.sidebar.append(this.search.element);
         this.search.focus();
@@ -345,6 +353,9 @@ export class Workbench implements WorkbenchContext {
     // Contributed menus may address a view directly; the settings menu item does.
     local.registerLocal('workbench.view.settings', 'Open Settings', 'View', () =>
       this.showSidebarView('settings'),
+    );
+    local.registerLocal('workbench.view.unsavedChanges', 'Show Unsaved Changes', 'View', () =>
+      this.showSidebarView('unsaved-changes'),
     );
 
     // Commands whose arguments only the UI knows. The ids stay canonical; the context is filled

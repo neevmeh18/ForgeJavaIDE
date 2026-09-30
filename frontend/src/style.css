@@ -308,6 +308,49 @@ button:focus-visible {
   line-height: 1.5;
 }
 
+/* ---- unsaved changes --------------------------------------------------------------- */
+
+.unsaved-document {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unsaved-document.selected {
+  background: var(--bg-hover);
+}
+
+.unsaved-preview {
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.unsaved-preview:empty {
+  display: none;
+}
+
+.unsaved-preview-header {
+  padding: 10px;
+}
+
+.unsaved-preview-header h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.unsaved-text {
+  margin: 0;
+  padding: 10px;
+  max-height: 50vh;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+  tab-size: 4;
+}
+
 /* ---- explorer ---------------------------------------------------------------------- */
 
 .tree-row {

@@ -108,7 +108,7 @@ Selected ids:
 |---|---|---|
 | `workspace.open` `workspace.close` `workspace.reload` `workspace.create` | `workspace.available` `workspace.opened` `workspace.current` `workspace.sessions` | `workspace.opened` `workspace.closed` `workspace.sessionAttached` |
 | `file.save` `file.create` `file.createDirectory` `file.delete` `file.rename` `file.move` `file.copy` | `file.list` `file.read` `file.stat` | `file.created` `file.changed` `file.deleted` `file.moved` `file.saved` |
-| `editor.open` `editor.close` `editor.update` `editor.format` | `editor.documents` `editor.document` | `editor.opened` `editor.closed` `editor.documentChanged` `editor.dirtyStateChanged` |
+| `editor.open` `editor.close` `editor.update` `editor.format` | `editor.documents` `editor.unsavedDocuments` `editor.document` | `editor.opened` `editor.closed` `editor.documentChanged` `editor.dirtyStateChanged` |
 | `auth.login` `auth.logout` | `auth.currentUser` | `auth.sessionStarted` `auth.sessionEnded` |
 | `search.files` `search.text` `search.symbols` | — | — |
 | `terminal.create` `terminal.write` `terminal.resize` `terminal.kill` | `terminal.list` `terminal.scrollback` | `terminal.created` `terminal.output` `terminal.exited` |
@@ -117,3 +117,9 @@ Selected ids:
 | `debug.start` `debug.stop` `debug.continue` `debug.pause` `debug.step` `debug.toggleBreakpoint` | `debug.sessions` `debug.breakpoints` `debug.stackTrace` `debug.variables` | `debug.stopped` `debug.output` `debug.breakpointsChanged` |
 | `language.rename` | `language.completion` `language.hover` `language.definition` `language.references` `language.documentSymbols` `language.codeActions` | `language.diagnostics` |
 | `settings.set` `state.set` `command.cancel` `extension.activate` | `settings.resolved` `settings.definitions` `state.get` `workbench.commands` `workbench.contributions` `workbench.extensions` `workbench.status` | `settings.changed` `extension.activated` `extension.failed` |
+
+`editor.documents` lists documents viewed by the calling session. `editor.unsavedDocuments`
+returns dirty document metadata for the requested workspace, sorted by path, including buffers
+retained after their last viewer closes. It does not open documents or return their text. Use
+`editor.document` with a returned `documentId` to preview the current buffer and `editor.open`
+with its `path` to reopen the same draft. These drafts are held in memory, not persisted.

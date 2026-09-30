@@ -84,6 +84,10 @@ Beyond that first milestone:
 - **Quick open** (`Ctrl`/`Cmd`+`P`) backed by workspace-wide file search
 - **Find in files** (`Ctrl`/`Cmd`+`Shift`+`F`), cancellable with `Esc`
 - **Editor groups**, tabs, dirty state, split editor, Monaco integration
+- **Unsaved Changes** view (activity bar or command palette) lists dirty buffers in the current
+  workspace, including closed tabs. Select a document to preview its current text, then choose
+  **Restore in Editor** to reopen the retained draft. Drafts live in backend memory and do not
+  survive a backend restart.
 - **Terminals** — line-oriented, running in the backend's environment
 - **Tasks** from `.forge/tasks.json`, presented in a terminal but tracked by the task engine
 - **Source control** — status, staging, commit, branches, diff, history, fetch/pull/push
@@ -93,7 +97,7 @@ Beyond that first milestone:
 - **Extensions** loaded from jars, activated lazily, isolated from failure
 - **Breakpoints** — set and kept per workspace, ready for an adapter
 
-Not implemented, deliberately: a debug adapter, collaboration, roles and permissions, and tests.
+Not implemented, deliberately: a debug adapter, collaboration, and roles and permissions.
 The architecture leaves room for all of them; none is faked.
 
 ---
@@ -118,6 +122,9 @@ cd frontend && npm install && npm run dev
 The Vite dev server on <http://localhost:5173> proxies `/api` to the backend, so the browser
 still sees one origin. Java 21 is the single baseline: `<java.version>` in `pom.xml` and
 `ARG JAVA_VERSION` in the `Dockerfile` are the same number.
+
+Run backend regression tests with `mvn test` and frontend view tests with
+`cd frontend && npm ci && npm test`. `npm run build` checks TypeScript and builds the workbench.
 
 ---
 

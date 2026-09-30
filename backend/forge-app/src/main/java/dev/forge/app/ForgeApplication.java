@@ -293,6 +293,8 @@ public final class ForgeApplication implements Lifecycle.Component {
     private static void defineViews(ContributionRegistry contributions) {
         contributions.addView(ContributionRegistry.View.of("explorer", "Explorer", "sidebar", "files", 10));
         contributions.addView(ContributionRegistry.View.of("search", "Search", "sidebar", "search", 20));
+        contributions.addView(ContributionRegistry.View.of("unsaved-changes", "Unsaved Changes", "sidebar",
+                "dirty", 45));
         contributions.addView(ContributionRegistry.View.of("extensions", "Extensions", "sidebar",
                 "extensions", 50));
         contributions.addView(ContributionRegistry.View.of("terminal", "Terminal", "panel", "terminal", 10));
