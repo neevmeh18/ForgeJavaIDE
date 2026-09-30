@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "reforge": {
+      "command": "reforge-mcp",
+      "env": {
+        "REFORGE_PROJECT": "neevmeh18/forgejavaide"
+      }
+    }
+  }
+}
