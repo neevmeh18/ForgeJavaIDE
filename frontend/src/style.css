@@ -866,3 +866,56 @@ button:focus-visible {
 .toast-close {
   color: var(--text-muted);
 }
+
+/* ---- snapshots --------------------------------------------------------------------- */
+
+.snapshot-list {
+  overflow: auto;
+}
+
+.snapshot-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.snapshot-row:hover {
+  background: var(--bg-hover);
+}
+
+.snapshot-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.snapshot-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.snapshot-action {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.snapshot-action:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.snapshot-delete:hover {
+  color: var(--danger);
+}

@@ -58,6 +58,7 @@ export function icon(name: string): HTMLElement {
     terminal: '▸',
     warning: '⚠',
     checklist: '☑',
+    history: '◴',
     settings: '⚙',
     close: '✕',
     chevron: '›',
