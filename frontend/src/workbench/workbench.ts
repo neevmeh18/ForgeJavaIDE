@@ -15,7 +15,6 @@ import { Panel } from './panel';
 import { ScmView } from './scmView';
 import { SearchView } from './searchView';
 import { ExtensionsView, SettingsView } from './sidePanels';
-import { SnapshotView } from './snapshotView';
 import { StatusBar } from './statusBar';
 
 /**
@@ -56,7 +55,6 @@ export class Workbench implements WorkbenchContext {
   private readonly explorer: Explorer;
   private readonly search: SearchView;
   private readonly scm: ScmView;
-  private readonly snapshots: SnapshotView;
   private readonly extensions: ExtensionsView;
   private readonly settings: SettingsView;
   private activeView = 'explorer';
@@ -79,7 +77,6 @@ export class Workbench implements WorkbenchContext {
     this.explorer = new Explorer(this);
     this.search = new SearchView(this);
     this.scm = new ScmView(this);
-    this.snapshots = new SnapshotView(this);
     this.extensions = new ExtensionsView(this);
     this.settings = new SettingsView(this);
 
@@ -240,10 +237,6 @@ export class Workbench implements WorkbenchContext {
       case 'extensions':
         this.sidebar.append(this.extensions.element);
         void this.extensions.refresh();
-        break;
-      case 'snapshots':
-        this.sidebar.append(this.snapshots.element);
-        void this.snapshots.refresh();
         break;
       case 'settings':
         this.sidebar.append(this.settings.element);
