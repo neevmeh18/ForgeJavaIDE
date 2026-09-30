@@ -14,6 +14,7 @@ import dev.forge.filesystem.FileService;
 import dev.forge.filesystem.Resource;
 import dev.forge.settings.SettingsEvents;
 import dev.forge.settings.SettingsService;
+import dev.forge.workspace.WorkspaceEvents;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +100,13 @@ public final class EditorService implements Lifecycle.Component {
                 event -> find(event.workspaceId(), event.path()).ifPresent(this::markClean)));
         subscriptions.add(events.subscribe(FileEvents.FileDeleted.class,
                 event -> find(event.workspaceId(), event.path()).ifPresent(buffer -> closeAll(buffer.document))));
+        // A session may change its active workspace before the edit's delayed pass runs. Re-arm
+        // the same pass for every workspace that still has dirty buffers so switching workspaces
+        // cannot strand an in-memory edit.
+        subscriptions.add(events.subscribe(WorkspaceEvents.SessionAttached.class,
+                event -> scheduleAutosaveForDirtyBuffers()));
+        subscriptions.add(events.subscribe(WorkspaceEvents.SessionDetached.class,
+                event -> scheduleAutosaveForDirtyBuffers()));
         if (settings != null) {
             subscriptions.add(events.subscribe(SettingsEvents.SettingChanged.class, this::settingChanged));
         }
@@ -295,6 +303,22 @@ public final class EditorService implements Lifecycle.Component {
         if (dirty && autoSaveEnabled(workspace)) {
             scheduleAutosave(workspace, AUTO_SAVE_RETRY_MILLIS);
         }
+    }
+
+    private void scheduleAutosaveForDirtyBuffers() {
+        Set<WorkspaceId> dirtyWorkspaces = ConcurrentHashMap.newKeySet();
+        for (Buffer buffer : List.copyOf(buffers.values())) {
+            synchronized (buffer) {
+                if (!buffer.discarded
+                        && buffers.get(key(buffer.document.workspaceId(), buffer.document.path())) == buffer
+                        && buffer.document.dirty()) {
+                    dirtyWorkspaces.add(buffer.document.workspaceId());
+                }
+            }
+        }
+        dirtyWorkspaces.stream()
+                .filter(this::autoSaveEnabled)
+                .forEach(workspace -> scheduleAutosave(workspace, AUTO_SAVE_DELAY_MILLIS));
     }
 
     private void saveIfDirty(Buffer buffer) {
