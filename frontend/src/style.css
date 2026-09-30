@@ -873,6 +873,15 @@ button:focus-visible {
   overflow: auto;
 }
 
+.snapshot-toolbar {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.snapshot-filter {
+  height: 28px;
+}
+
 .snapshot-row {
   display: flex;
   flex-direction: column;
@@ -900,7 +909,22 @@ button:focus-visible {
 
 .snapshot-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.snapshot-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.snapshot-label {
+  padding: 2px 5px;
+  background: var(--bg-active);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 .snapshot-action {
@@ -918,4 +942,31 @@ button:focus-visible {
 
 .snapshot-delete:hover {
   color: var(--danger);
+}
+
+.snapshot-section {
+  padding: 8px 10px 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.snapshot-share-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.snapshot-share-row .snapshot-meta {
+  grid-column: 1;
+}
+
+.snapshot-share-row .snapshot-action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
 }

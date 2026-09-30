@@ -53,7 +53,8 @@ public final class LocalSnapshotStore implements SnapshotStore {
     }
 
     @Override
-    public Snapshot create(UserId owner, WorkspaceId sourceWorkspace, String name) {
+    public Snapshot create(UserId owner, WorkspaceId sourceWorkspace, String name,
+                           List<String> labels, Instant expiresAt) {
         Path source = workspaceDirectory(sourceWorkspace);
         Path ownerRoot = ownerDirectory(owner);
         String id = Ids.random("snapshot");
@@ -67,7 +68,7 @@ public final class LocalSnapshotStore implements SnapshotStore {
         try {
             CopyStats stats = copyTree(source, temporary.resolve(CONTENTS), true);
             Snapshot snapshot = new Snapshot(id, owner, sourceWorkspace, name, Instant.now(),
-                    stats.files(), stats.bytes());
+                    expiresAt, labels, stats.files(), stats.bytes());
             writeManifest(temporary.resolve(MANIFEST), snapshot);
             moveDirectory(temporary, ownerRoot.resolve(id));
             log.with("workspaceId", sourceWorkspace).with("snapshotId", id).info("Snapshot created");
@@ -126,6 +127,39 @@ public final class LocalSnapshotStore implements SnapshotStore {
     }
 
     @Override
+    public Snapshot update(UserId owner, String snapshotId, String name,
+                           List<String> labels, Instant expiresAt) {
+        Snapshot current = find(owner, snapshotId);
+        Snapshot updated = new Snapshot(current.id(), current.ownerId(), current.sourceWorkspaceId(),
+                name, current.createdAt(), expiresAt, labels, current.fileCount(), current.totalBytes());
+        Path directory = snapshotDirectory(owner, snapshotId);
+        Path temporary;
+        try {
+            temporary = Files.createTempFile(directory, ".manifest-", ".tmp");
+        } catch (IOException e) {
+            throw ForgeException.normalize(e);
+        }
+        try {
+            writeManifest(temporary, updated);
+            try {
+                Files.move(temporary, directory.resolve(MANIFEST), StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temporary, directory.resolve(MANIFEST), StandardCopyOption.REPLACE_EXISTING);
+            }
+            return updated;
+        } catch (IOException e) {
+            throw ForgeException.normalize(e);
+        } finally {
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException ignored) {
+                // The metadata write result is authoritative.
+            }
+        }
+    }
+
+    @Override
     public void delete(UserId owner, String snapshotId) {
         find(owner, snapshotId);
         Path directory = snapshotDirectory(owner, snapshotId);
@@ -135,6 +169,18 @@ public final class LocalSnapshotStore implements SnapshotStore {
             throw ForgeException.normalize(e);
         }
         log.with("snapshotId", snapshotId).info("Snapshot deleted");
+    }
+
+    @Override
+    public int pruneExpired(UserId owner, WorkspaceId sourceWorkspace, Instant now) {
+        int removed = 0;
+        for (Snapshot snapshot : list(owner, sourceWorkspace)) {
+            if (snapshot.expired(now)) {
+                delete(owner, snapshot.id());
+                removed++;
+            }
+        }
+        return removed;
     }
 
     private CopyStats copyTree(Path source, Path destination, boolean countLimits) {
@@ -236,6 +282,10 @@ public final class LocalSnapshotStore implements SnapshotStore {
         values.setProperty("sourceWorkspaceId", snapshot.sourceWorkspaceId().value());
         values.setProperty("name", snapshot.name());
         values.setProperty("createdAt", snapshot.createdAt().toString());
+        if (snapshot.expiresAt() != null) {
+            values.setProperty("expiresAt", snapshot.expiresAt().toString());
+        }
+        values.setProperty("labels", String.join(",", snapshot.labels()));
         values.setProperty("fileCount", String.valueOf(snapshot.fileCount()));
         values.setProperty("totalBytes", String.valueOf(snapshot.totalBytes()));
         try (OutputStream output = Files.newOutputStream(path)) {
@@ -255,6 +305,8 @@ public final class LocalSnapshotStore implements SnapshotStore {
                     WorkspaceId.of(required(values, "sourceWorkspaceId")),
                     required(values, "name"),
                     Instant.parse(required(values, "createdAt")),
+                    optionalInstant(values, "expiresAt"),
+                    optionalLabels(values),
                     Long.parseLong(required(values, "fileCount")),
                     Long.parseLong(required(values, "totalBytes")));
         } catch (IOException | IllegalArgumentException e) {
@@ -268,6 +320,16 @@ public final class LocalSnapshotStore implements SnapshotStore {
             throw new IllegalArgumentException("Missing " + key);
         }
         return value;
+    }
+
+    private static Instant optionalInstant(Properties values, String key) {
+        String value = values.getProperty(key);
+        return value == null || value.isBlank() ? null : Instant.parse(value);
+    }
+
+    private static List<String> optionalLabels(Properties values) {
+        String value = values.getProperty("labels", "");
+        return value.isBlank() ? List.of() : List.of(value.split(","));
     }
 
     private static String digest(String value) {

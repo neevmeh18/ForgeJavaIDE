@@ -11,9 +11,11 @@ import dev.forge.core.query.QueryRegistry.QueryDescriptor;
 public final class SnapshotCommands {
 
     private final SnapshotService snapshots;
+    private final SnapshotSharingService sharing;
 
-    public SnapshotCommands(SnapshotService snapshots) {
+    public SnapshotCommands(SnapshotService snapshots, SnapshotSharingService sharing) {
         this.snapshots = snapshots;
+        this.sharing = sharing;
     }
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
@@ -21,7 +23,16 @@ public final class SnapshotCommands {
                 CommandDescriptor.of("snapshot.create", "Snapshots", "Create Workspace Snapshot")
                         .workspaceScoped().asSensitive(),
                 ctx -> snapshots.create(ctx.requireUser(), ctx.requireWorkspace(),
-                        ctx.args().string("name").orElse("Workspace snapshot")));
+                        ctx.args().string("name").orElse("Workspace snapshot"),
+                        ctx.args().strings("labels"), ctx.args().integer("retentionDays", 0)));
+
+        commands.register(
+                CommandDescriptor.of("snapshot.update", "Snapshots", "Update Snapshot Details")
+                        .workspaceScoped().asSensitive(),
+                ctx -> snapshots.update(ctx.requireUser(), ctx.requireWorkspace(),
+                        ctx.args().requiredString("snapshotId"),
+                        ctx.args().string("name").orElse("Workspace snapshot"),
+                        ctx.args().strings("labels"), ctx.args().integer("retentionDays", 0)));
 
         commands.register(
                 CommandDescriptor.of("snapshot.restore", "Snapshots", "Restore Workspace Snapshot")
@@ -32,6 +43,28 @@ public final class SnapshotCommands {
                             .orElse(current.value()));
                     return snapshots.restore(ctx.requireUser(), current,
                             ctx.args().requiredString("snapshotId"), target);
+                });
+
+        commands.register(
+                CommandDescriptor.of("snapshot.share", "Snapshots", "Share Workspace Snapshot")
+                        .workspaceScoped().asSensitive(),
+                ctx -> sharing.issue(ctx.requireUser(), ctx.requireWorkspace(),
+                        ctx.args().requiredString("snapshotId"),
+                        ctx.args().integer("validDays", 7)));
+
+        commands.register(
+                CommandDescriptor.of("snapshot.importShared", "Snapshots", "Import Shared Snapshot")
+                        .workspaceScoped().asSensitive(),
+                ctx -> sharing.importSnapshot(ctx.args().requiredString("token"),
+                        ctx.requireUser(), ctx.sessionId(), ctx.requireWorkspace()));
+
+        commands.register(
+                CommandDescriptor.of("snapshot.revokeShare", "Snapshots", "Revoke Snapshot Share")
+                        .workspaceScoped().asSensitive(),
+                ctx -> {
+                    sharing.revoke(ctx.requireUser(), ctx.requireWorkspace(),
+                            ctx.args().requiredString("shareId"));
+                    return null;
                 });
 
         commands.register(
@@ -46,6 +79,16 @@ public final class SnapshotCommands {
         queries.register(
                 QueryDescriptor.of("snapshot.list", "Snapshots created from this workspace").workspaceScoped(),
                 (ctx, args) -> snapshots.list(ctx.requireUser(), ctx.requireWorkspace()));
+
+        queries.register(
+                QueryDescriptor.of("snapshot.shares", "Active snapshot shares for this workspace")
+                        .workspaceScoped(),
+                (ctx, args) -> sharing.list(ctx.requireUser(), ctx.requireWorkspace()));
+
+        queries.register(
+                QueryDescriptor.of("snapshot.sharedPreview", "Details for a shared snapshot")
+                        .workspaceScoped(),
+                (ctx, args) -> sharing.preview(args.requiredString("token")));
 
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(
                 ContributionRegistry.MENU_FILE, "snapshot.create", "Create Snapshot…", "workspace", 30));
