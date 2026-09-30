@@ -11,7 +11,7 @@ const descriptor = (id, args = []) => ({ id, title: id, category: 'Test', descri
 test('all TypeScript sources parse using the actual Node TypeScript transformer', () => {
   const root = new URL('../src/', import.meta.url);
   const paths = fs.readdirSync(root, { recursive: true }).filter(p => p.endsWith('.ts'));
-  assert.equal(paths.length, 21);
+  assert.equal(paths.length, 22);
   for (const path of paths) stripTypeScriptTypes(fs.readFileSync(new URL(path, root), 'utf8'), { mode: 'transform' });
 });
 

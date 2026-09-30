@@ -46,6 +46,8 @@ import dev.forge.state.StateCommands;
 import dev.forge.state.StateStore;
 import dev.forge.tasks.TaskCommands;
 import dev.forge.tasks.TaskService;
+import dev.forge.tasklog.TaskLogQueries;
+import dev.forge.tasklog.TaskLogService;
 import dev.forge.terminal.TerminalCommands;
 import dev.forge.terminal.TerminalService;
 import dev.forge.transport.EventStream;
@@ -123,6 +125,7 @@ public final class ForgeApplication implements Lifecycle.Component {
                 new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
                 events, config.shell());
         TaskService tasks = new TaskService(List.of(new WorkspaceTaskProvider(workspaces)), terminals, events);
+        TaskLogService taskLogs = new TaskLogService(tasks, events);
         SourceControlService scm =
                 new SourceControlService(List.of(new GitSourceControlProvider(workspaceProvider)), events);
         DebugService debug = new DebugService(events);
@@ -140,6 +143,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         new SearchCommands(search).register(commandRegistry, contributions);
         new TerminalCommands(terminals).register(commandRegistry, queries, contributions);
         new TaskCommands(tasks).register(commandRegistry, queries, contributions);
+        new TaskLogQueries(taskLogs).register(queries, contributions);
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
         new ScmCommands(scm).register(commandRegistry, queries, contributions);
         new DebugCommands(debug).register(commandRegistry, queries, contributions);
@@ -188,7 +192,7 @@ public final class ForgeApplication implements Lifecycle.Component {
                 new StaticAssets(config.webRoot()), () -> ready, config.host(), config.port(),
                 config.requestBodyTimeout());
 
-        this.started = List.of(executor, workspaces, sessions, editors, terminals, tasks, scm, debug,
+        this.started = List.of(executor, workspaces, sessions, editors, terminals, tasks, taskLogs, scm, debug,
                 languages, extensions, gateway, stream, http);
     }
 

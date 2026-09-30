@@ -20,7 +20,8 @@ public final class TaskCommands {
                 CommandDescriptor.of("task.run", "Tasks", "Run Task") .withArguments(new CommandDescriptor.Argument("taskId", "string", "taskId"))
                         .describedAs("Runs a task defined by the workspace or a provider")
                         .workspaceScoped().asSensitive(),
-                ctx -> tasks.run(ctx.requireWorkspace(), ctx.args().requiredString("taskId")));
+                ctx -> tasks.run(ctx.requireWorkspace(), ctx.args().requiredString("taskId"),
+                        ctx.requireUser(), ctx.sessionId()));
 
         commands.register(
                 CommandDescriptor.of("task.cancel", "Tasks", "Cancel Task") .withArguments(new CommandDescriptor.Argument("executionId", "string", "executionId")).workspaceScoped().asSensitive(),

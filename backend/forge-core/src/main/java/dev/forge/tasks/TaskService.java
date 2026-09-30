@@ -2,8 +2,10 @@ package dev.forge.tasks;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
+import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Ids.TaskExecutionId;
 import dev.forge.core.Ids.TerminalId;
+import dev.forge.core.Ids.UserId;
 import dev.forge.core.Ids.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
@@ -42,7 +44,10 @@ public final class TaskService implements Lifecycle.Component {
         }
     }
 
+    public record Invocation(UserId userId, SessionId sessionId) { }
+
     private final Map<TaskExecutionId, Execution> executions = new ConcurrentHashMap<>();
+    private final Map<TaskExecutionId, Invocation> invocations = new ConcurrentHashMap<>();
     private final Map<TerminalId, TaskExecutionId> byTerminal = new ConcurrentHashMap<>();
     private final Set<TaskExecutionId> cancellationRequested = ConcurrentHashMap.newKeySet();
     private final List<TaskProvider> providers;
@@ -62,6 +67,7 @@ public final class TaskService implements Lifecycle.Component {
             executions.values().removeIf(value -> {
                 if (!value.workspaceId().equals(event.workspaceId())) return false;
                 byTerminal.remove(value.terminalId());
+                invocations.remove(value.id());
                 cancellationRequested.remove(value.id());
                 return true;
             });
@@ -74,6 +80,7 @@ public final class TaskService implements Lifecycle.Component {
     public void dispose() {
         subscriptions.dispose();
         byTerminal.clear();
+        invocations.clear();
         cancellationRequested.clear();
         executions.clear();
     }
@@ -92,6 +99,10 @@ public final class TaskService implements Lifecycle.Component {
     }
 
     public Execution run(WorkspaceId workspace, String taskId) {
+        return run(workspace, taskId, null, null);
+    }
+
+    public Execution run(WorkspaceId workspace, String taskId, UserId actorUserId, SessionId actorSessionId) {
         Task task = available(workspace).stream()
                 .filter(candidate -> candidate.id().equals(taskId))
                 .findFirst()
@@ -105,6 +116,9 @@ public final class TaskService implements Lifecycle.Component {
         Execution execution = new Execution(TaskExecutionId.of(Ids.random("task")), task.id(), task.name(),
                 workspace, terminal.id(), State.RUNNING, -1, Instant.now());
         executions.put(execution.id(), execution);
+        if (actorUserId != null || actorSessionId != null) {
+            invocations.put(execution.id(), new Invocation(actorUserId, actorSessionId));
+        }
         byTerminal.put(terminal.id(), execution.id());
         prune(workspace);
         log.with("workspaceId", workspace).with("taskId", task.id()).info("Task started");
@@ -140,6 +154,11 @@ public final class TaskService implements Lifecycle.Component {
                 .orElseThrow(() -> ForgeException.notFound("Unknown task execution: " + id));
     }
 
+    public Optional<Invocation> invocation(TaskExecutionId id, WorkspaceId workspace) {
+        require(id, workspace);
+        return Optional.ofNullable(invocations.get(id));
+    }
+
     private void finishTerminal(TerminalId terminalId, int exitCode) {
         TaskExecutionId id = byTerminal.remove(terminalId);
         if (id == null) {
@@ -170,7 +189,10 @@ public final class TaskService implements Lifecycle.Component {
                 .sorted(Comparator.comparing(Execution::startedAt).reversed())
                 .toList();
         finished.stream().skip(MAX_RETAINED_EXECUTIONS_PER_WORKSPACE)
-                .forEach(value -> executions.remove(value.id(), value));
+                .forEach(value -> {
+                    executions.remove(value.id(), value);
+                    invocations.remove(value.id());
+                });
     }
 
     private static String commandLine(Task task) {
