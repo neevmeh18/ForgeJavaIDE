@@ -106,7 +106,7 @@ public final class SettingsService {
             document.put(key, value);
         }
         state.put(scope, owner, DOCUMENT_KEY, document);
-        events.publish(new SettingsEvents.SettingChanged(workspace, key, layer, value));
+        events.publish(new SettingsEvents.SettingChanged(workspace, key, layer, value, user));
         return resolve(key, user, workspace);
     }
 

@@ -27,12 +27,12 @@ public final class EditorCommands {
                         .describedAs("Opens a document buffer for a workspace file")
                         .workspaceScoped(),
                 ctx -> editors.open(Resource.of(ctx.requireWorkspace(), ctx.args().requiredString("path")),
-                        ctx.sessionId()));
+                        ctx.sessionId(), ctx.userId()));
 
         commands.register(
                 CommandDescriptor.of("editor.close", "Editor", "Close Editor").workspaceScoped(),
                 ctx -> {
-                    editors.close(ctx.args().documentId("documentId"), ctx.sessionId());
+                    editors.close(ctx.args().documentId("documentId"), ctx.sessionId(), ctx.userId());
                     return null;
                 });
 
@@ -42,7 +42,7 @@ public final class EditorCommands {
                         .workspaceScoped(),
                 ctx -> editors.update(ctx.args().documentId("documentId"),
                         ctx.args().requiredString("text"),
-                        ctx.args().integer("version", 0)));
+                        ctx.args().integer("version", 0), ctx.userId()));
 
         queries.register(
                 QueryDescriptor.of("editor.documents", "Documents open in this session").workspaceScoped(),
