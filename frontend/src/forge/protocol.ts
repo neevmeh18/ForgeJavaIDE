@@ -183,6 +183,16 @@ export interface TaskInfo {
   source: string;
 }
 
+export interface SnapshotInfo {
+  id: string;
+  ownerId: string;
+  sourceWorkspaceId: string;
+  name: string;
+  createdAt: string;
+  fileCount: number;
+  totalBytes: number;
+}
+
 export interface ExtensionStatus {
   id: string;
   name: string;
