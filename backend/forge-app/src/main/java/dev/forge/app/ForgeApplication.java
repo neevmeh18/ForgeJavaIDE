@@ -43,7 +43,9 @@ import dev.forge.settings.Settings;
 import dev.forge.settings.SettingsCommands;
 import dev.forge.settings.SettingsService;
 import dev.forge.snapshot.SnapshotCommands;
+import dev.forge.snapshot.SnapshotSharingService;
 import dev.forge.snapshot.SnapshotService;
+import dev.forge.snapshot.SnapshotStore;
 import dev.forge.state.StateCommands;
 import dev.forge.state.StateStore;
 import dev.forge.tasks.TaskCommands;
@@ -103,8 +105,10 @@ public final class ForgeApplication implements Lifecycle.Component {
         Authorizer authorizer = new Authorizer(workspaces);
         QueryRegistry queries = new QueryRegistry(authorizer);
         CommandExecutor executor = new CommandExecutor(commandRegistry, events, authorizer);
-        SnapshotService snapshots =
-                new SnapshotService(new LocalSnapshotStore(config.dataDir(), workspaceProvider), events);
+        SnapshotStore snapshotStore = new LocalSnapshotStore(config.dataDir(), workspaceProvider);
+        SnapshotService snapshots = new SnapshotService(snapshotStore, events);
+        SnapshotSharingService snapshotSharing =
+                new SnapshotSharingService(snapshotStore, workspaces, events);
 
         SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
                 config.sessionMaxLifetime());
@@ -131,7 +135,7 @@ public final class ForgeApplication implements Lifecycle.Component {
 
         // ---- Feature registration ---------------------------------------------------------
         new WorkspaceCommands(workspaces).register(commandRegistry, queries, contributions);
-        new SnapshotCommands(snapshots).register(commandRegistry, queries, contributions);
+        new SnapshotCommands(snapshots, snapshotSharing).register(commandRegistry, queries, contributions);
         new FileCommands(files).register(commandRegistry, queries, contributions);
         new EditorCommands(editors, languages).register(commandRegistry, queries, contributions);
         new AuthCommands(authentication, sessions).register(commandRegistry, queries);
