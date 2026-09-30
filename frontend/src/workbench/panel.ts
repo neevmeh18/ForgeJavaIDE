@@ -3,6 +3,7 @@ import type { TaskInfo, ViewContribution } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 import { TerminalView } from './terminalView';
+import { TaskLogView } from './taskLogView';
 
 /**
  * The bottom panel: terminal, problems and tasks.
@@ -17,6 +18,7 @@ export class Panel {
   readonly element = el('section', { class: 'panel', hidden: 'true' });
 
   readonly terminal: TerminalView;
+  readonly taskLogs: TaskLogView;
   private readonly tabs = el('div', { class: 'panel-tabs', role: 'tablist' });
   private readonly body = el('div', { class: 'panel-body' });
   private readonly problems = el('div', { class: 'view problems-view' });
@@ -27,6 +29,7 @@ export class Panel {
 
   constructor(private readonly ctx: WorkbenchContext) {
     this.terminal = new TerminalView(ctx);
+    this.taskLogs = new TaskLogView(ctx);
     const close = el('button', { class: 'view-action', title: 'Close panel', text: '✕' });
     close.addEventListener('click', () => void ctx.commands.execute('workbench.togglePanel'));
     this.element.append(el('div', { class: 'panel-header' }, this.tabs, close), this.body);
@@ -70,6 +73,9 @@ export class Panel {
     } else if (viewId === 'tasks') {
       this.body.append(this.tasks);
       void this.renderTasks();
+    } else if (viewId === 'taskLogs') {
+      this.body.append(this.taskLogs.element);
+      void this.taskLogs.refresh();
     } else if (viewId === 'problems') {
       this.body.append(this.problems);
       this.renderProblems();
@@ -87,6 +93,7 @@ export class Panel {
     this.diagnostics.clear();
     this.renderProblems();
     this.terminal.resetWorkspace();
+    this.taskLogs.resetWorkspace();
   }
 
   applySettings(settings: Map<string, unknown>): void {

@@ -11,3 +11,5 @@ workspace/*
 !workspace/.gitkeep
 
 local_analysis/
+.mcp.json
+.reforge/
