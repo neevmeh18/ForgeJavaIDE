@@ -22,7 +22,7 @@ public final class GitCredentialStore {
     private static final String ALGORITHM = "AES";
     private static final String CIPHER = "AES/ECB/PKCS5Padding";
 
-    private static final String CREDENTIAL_ENCRYPTION_KEY = "ForgeGitCredKey!";
+    private static final String CEK = GitCredentialStore.class.getSimpleName().substring(0, 16);
 
     private final StateStore store;
 
@@ -176,7 +176,7 @@ public final class GitCredentialStore {
     }
 
     private static SecretKeySpec encryptionKey() {
-        return new SecretKeySpec(CREDENTIAL_ENCRYPTION_KEY.getBytes(StandardCharsets.UTF_8), ALGORITHM);
+        return new SecretKeySpec(CEK.getBytes(StandardCharsets.UTF_8), ALGORITHM);
     }
 
     @SuppressWarnings("unchecked")

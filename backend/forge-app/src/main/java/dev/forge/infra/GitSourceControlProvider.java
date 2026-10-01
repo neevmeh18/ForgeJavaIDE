@@ -231,39 +231,38 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     public void fetch(WorkspaceId workspace) {
         Path directory = repository(workspace);
         String remoteUrl = getRemoteUrl(workspace);
-        networkGit(directory, remoteUrl, "Fetch", "fetch", "--prune");
+        networkGit(directory, remoteUrl, "Fetch", "fetch", "--prune", "origin");
     }
 
     @Override
     public void pull(WorkspaceId workspace) {
         Path directory = repository(workspace);
         String remoteUrl = getRemoteUrl(workspace);
-        networkGit(directory, remoteUrl, "Pull", "pull", "--ff-only");
+        networkGit(directory, remoteUrl, "Pull", "pull", "--ff-only", "origin");
     }
 
     @Override
     public void push(WorkspaceId workspace) {
         Path directory = repository(workspace);
         String remoteUrl = getRemoteUrl(workspace, true);
-        networkGit(directory, remoteUrl, "Push", "push");
+        networkGit(directory, remoteUrl, "Push", "push", "origin");
     }
 
     public Path cloneRepository(Path targetDir, String remoteUrl, String branch) {
+        String normalizedRemoteUrl = GitCredentialStore.normalize(remoteUrl);
         GitCredentialStore.Credential credential = credentials == null
                 ? null
-                : credentials.find(remoteUrl).orElse(null);
-        return cloneRepository(targetDir, remoteUrl, branch, credential);
+                : credentials.find(normalizedRemoteUrl).orElse(null);
+        return cloneRepository(targetDir, normalizedRemoteUrl, branch, credential);
     }
 
     public Path cloneRepository(Path targetDir, String remoteUrl, String branch,
             GitCredentialStore.Credential credential) {
+        String normalizedRemoteUrl = GitCredentialStore.normalize(remoteUrl);
         Path dir = targetDir.normalize();
         GitCredentialStore.Credential effectiveCredential = credential;
         if (effectiveCredential == null && credentials != null) {
-            effectiveCredential = credentials.find(remoteUrl).orElse(null);
-        }
-        if (effectiveCredential != null) {
-            GitCredentialStore.normalize(remoteUrl);
+            effectiveCredential = credentials.find(normalizedRemoteUrl).orElse(null);
         }
         List<String> args = new ArrayList<>(List.of("clone"));
         if (branch != null && !branch.isBlank()) {
@@ -273,7 +272,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             args.add("--branch");
             args.add(branch);
         }
-        args.add(remoteUrl);
+        args.add(normalizedRemoteUrl);
         args.add(dir.toString());
         authenticatedGit(dir.getParent(), NETWORK_TIMEOUT, args, effectiveCredential).orThrow("Clone");
         return dir;
