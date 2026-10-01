@@ -183,6 +183,39 @@ export interface TaskInfo {
   source: string;
 }
 
+export interface SnapshotInfo {
+  id: string;
+  ownerId: string;
+  sourceWorkspaceId: string;
+  name: string;
+  createdAt: string;
+  expiresAt: string | null;
+  labels: string[];
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface SnapshotShareInfo {
+  id: string;
+  snapshotId: string;
+  sourceWorkspaceId: string;
+  snapshotName: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface IssuedSnapshotShare {
+  share: SnapshotShareInfo;
+  token: string;
+}
+
+export interface ImportedSnapshot {
+  snapshotId: string;
+  name: string;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}
+
 export interface ExtensionStatus {
   id: string;
   name: string;

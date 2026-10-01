@@ -1,0 +1,8 @@
+[mcp_servers.reforge]
+command = "reforge-mcp"
+
+[mcp_servers.reforge.env]
+REFORGE_PROJECT = "neevmeh18/forgejavaide"
+
+[mcp_servers.reforge.tools.reforge_enhance_prompt]
+approval_mode = "approve"
