@@ -20,11 +20,14 @@ services:
       IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:?Set IDE_AUTH_PASSWORD before starting Forge}"
       IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
+      IDE_ALLOW_INSECURE_GIT_HTTP: "${IDE_ALLOW_INSECURE_GIT_HTTP:-false}"
       IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"
       IDE_MAX_STATE_MB: "${IDE_MAX_STATE_MB:-32}"
     volumes:
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
       - forge-data:/data
+    networks:
+      - forge-dev
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -42,3 +45,7 @@ services:
 
 volumes:
   forge-data:
+
+networks:
+  forge-dev:
+    name: forge-dev

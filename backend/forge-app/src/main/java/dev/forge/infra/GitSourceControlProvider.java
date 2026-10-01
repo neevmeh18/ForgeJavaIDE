@@ -10,12 +10,19 @@ import dev.forge.scm.ScmTypes.Commit;
 import dev.forge.scm.ScmTypes.Diff;
 import dev.forge.scm.ScmTypes.RepositoryStatus;
 import dev.forge.scm.SourceControlProvider;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +43,26 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     private static final Duration LOCAL_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration NETWORK_TIMEOUT = Duration.ofMinutes(5);
     private static final Pattern BRANCH = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}");
+    private static final Pattern REMOTE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}");
+    private static final Pattern UNSAFE_CONFIG_KEY = Pattern.compile(
+            "^(?:include(?:if)?\\..*|"
+                    + "core\\.(?:askpass|fsmonitor|sshcommand|gitproxy|alternaterefscommand|hookspath|worktree|editor)|"
+                    + "credential\\..*|"
+                    + "filter\\..*\\.(?:clean|smudge|process)|"
+                    + "diff\\..*\\.(?:command|textconv)|"
+                    + "merge\\..*\\.driver|"
+                    + "branch\\..*\\.mergeoptions|"
+                    + "gpg(?:\\..*)?\\.program|"
+                    + "gc\\.recentobjectshook|"
+                    + "fetch\\.bundleuri|"
+                    + "transfer\\.bundleuri|"
+                    + "url\\..*\\.(?:insteadof|pushinsteadof)|"
+                    + "http\\..*|"
+                    + "remote\\..*\\.(?:proxy|proxyauthmethod|uploadpack|receivepack|vcs|promisor|partialclonefilter)|"
+                    + "push\\.(?:followtags|pushoption)|"
+                    + "submodule\\..*\\.update|"
+                    + "extensions\\.(?:worktreeconfig|partialclone))$",
+            Pattern.CASE_INSENSITIVE);
     private static final int MAX_PATHS = 256;
     private static final int MAX_PATH_CHARS = 4096;
 
@@ -43,9 +70,29 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     private static final String SEP = String.valueOf((char) 0x1f);
 
     private final LocalWorkspaceProvider workspaces;
+    private final GitCredentialStore credentials;
+    private final GitRemoteStore remotes;
+    private final boolean allowInsecureGitHttp;
 
     public GitSourceControlProvider(LocalWorkspaceProvider workspaces) {
+        this(workspaces, null, null, false);
+    }
+
+    public GitSourceControlProvider(LocalWorkspaceProvider workspaces, GitCredentialStore credentials) {
+        this(workspaces, credentials, null, false);
+    }
+
+    public GitSourceControlProvider(LocalWorkspaceProvider workspaces, GitCredentialStore credentials,
+            GitRemoteStore remotes) {
+        this(workspaces, credentials, remotes, false);
+    }
+
+    public GitSourceControlProvider(LocalWorkspaceProvider workspaces, GitCredentialStore credentials,
+            GitRemoteStore remotes, boolean allowInsecureGitHttp) {
         this.workspaces = workspaces;
+        this.credentials = credentials;
+        this.remotes = remotes;
+        this.allowInsecureGitHttp = allowInsecureGitHttp;
     }
 
     @Override
@@ -56,8 +103,8 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     @Override
     public boolean isRepository(WorkspaceId workspace) {
         return workspaces.directory(workspace)
-                .map(directory -> Files.isDirectory(directory.resolve(".git"))
-                        || Files.isRegularFile(directory.resolve(".git")))
+                .map(directory -> Files.isDirectory(directory.resolve(".git"), LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isSymbolicLink(directory.resolve(".git")))
                 .orElse(false);
     }
 
@@ -218,17 +265,76 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     @Override
     public void fetch(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "fetch", "--prune").orThrow("Fetch");
+        Path directory = repository(workspace);
+        RemotePolicy policy = fetchPolicy(directory, workspace);
+        List<String> command = new ArrayList<>(List.of("fetch"));
+        addFetchOptions(command);
+        command.add(policy.trustedUrl());
+        command.addAll(policy.fetchRefspecs());
+        networkGit(directory, policy.trustedUrl(), "Fetch", command.toArray(String[]::new));
     }
 
     @Override
     public void pull(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "pull", "--ff-only").orThrow("Pull");
+        Path directory = repository(workspace);
+        RemotePolicy policy = fetchPolicy(directory, workspace);
+        String branch = currentBranch(directory);
+        String mergeRef = upstreamMergeRef(directory, branch);
+        String trackingRef = trackingRef(policy.fetchRefspecs(), mergeRef);
+        if (trackingRef == null || trackingRef.isBlank()) {
+            throw ForgeException.conflict("Configured upstream is excluded by the origin fetch refspec");
+        }
+
+        List<String> command = new ArrayList<>(List.of("fetch"));
+        addFetchOptions(command);
+        command.add(policy.trustedUrl());
+        command.add(mergeRef + ":" + trackingRef);
+        networkGit(directory, policy.trustedUrl(), "Pull", command.toArray(String[]::new));
+        git(directory, LOCAL_TIMEOUT, "merge", "--ff-only", trackingRef).orThrow("Pull");
     }
 
     @Override
     public void push(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "push").orThrow("Push");
+        Path directory = repository(workspace);
+        String trustedUrl = validatedOriginUrl(directory, workspace);
+        String branch = currentBranch(directory);
+        String pushRemote = selectedPushRemote(directory, branch);
+        validatePushDestination(directory, pushRemote, trustedUrl);
+        List<String> refspecs = pushRefspecs(directory, branch, pushRemote);
+        List<String> command = new ArrayList<>(List.of("push", "--no-follow-tags", "--no-signed", trustedUrl));
+        command.addAll(refspecs);
+        networkGit(directory, trustedUrl, "Push", command.toArray(String[]::new));
+    }
+
+    public Path cloneRepository(Path targetDir, String remoteUrl, String branch) {
+        String normalizedRemoteUrl = GitCredentialStore.normalize(remoteUrl);
+        GitCredentialStore.Credential credential = credentials == null
+                ? null
+                : credentials.find(normalizedRemoteUrl).orElse(null);
+        return cloneRepository(targetDir, normalizedRemoteUrl, branch, credential);
+    }
+
+    public Path cloneRepository(Path targetDir, String remoteUrl, String branch,
+            GitCredentialStore.Credential credential) {
+        String normalizedRemoteUrl = GitCredentialStore.normalize(remoteUrl);
+        Path dir = targetDir.normalize();
+        GitCredentialStore.Credential effectiveCredential = credential;
+        if (effectiveCredential == null && credentials != null) {
+            effectiveCredential = credentials.find(normalizedRemoteUrl).orElse(null);
+        }
+        List<String> args = new ArrayList<>(List.of("clone"));
+        if (branch != null && !branch.isBlank()) {
+            if (!BRANCH.matcher(branch).matches() || branch.contains("..")) {
+                throw ForgeException.invalidArgument("Invalid branch name");
+            }
+            args.add("--branch");
+            args.add(branch);
+        }
+        args.add(normalizedRemoteUrl);
+        args.add(dir.toString());
+        authenticatedGit(dir.getParent(), NETWORK_TIMEOUT, args, normalizedRemoteUrl, effectiveCredential)
+                .orThrow("Clone");
+        return dir;
     }
 
     private void run(WorkspaceId workspace, String what, List<String> verb, List<String> paths) {
@@ -241,20 +347,505 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     }
 
     private static Processes.Result git(Path directory, Duration timeout, String... arguments) {
-        List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs", "-c", "core.quotePath=false"));
-        command.addAll(List.of("-c", "core.hooksPath=/dev/null",
-                "-c", "core.pager=cat",
-                "-c", "pager.status=false",
-                "-c", "pager.diff=false",
-                "-c", "diff.external=",
-                "-c", "protocol.ext.allow=never"));
-        command.addAll(List.of(arguments));
-        return Processes.run(directory, timeout, command);
+        return git(directory, timeout, List.of(arguments), Map.of());
+    }
+
+    private static Processes.Result git(Path directory, Duration timeout, List<String> arguments) {
+        return git(directory, timeout, arguments, Map.of());
+    }
+
+    private static Processes.Result git(Path directory, Duration timeout, List<String> arguments,
+            Map<String, String> environment) {
+        return git(directory, timeout, arguments, environment, List.of());
+    }
+
+    private static Processes.Result git(Path directory, Duration timeout, List<String> arguments,
+            Map<String, String> environment, List<String> additionalConfig) {
+        List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs"));
+        List<String> config = new ArrayList<>(List.of(
+                "core.quotePath=false",
+                "core.hooksPath=/dev/null",
+                "core.fsmonitor=false",
+                "core.sshCommand=/usr/bin/false",
+                "core.gitProxy=",
+                "core.alternateRefsCommand=",
+                "core.pager=cat",
+                "pager.status=false",
+                "pager.diff=false",
+                "diff.external=",
+                "credential.helper=",
+                "commit.gpgSign=false",
+                "tag.gpgSign=false",
+                "push.gpgSign=false",
+                "push.followTags=false",
+                "push.pushOption=",
+                "gc.auto=0",
+                "maintenance.auto=0",
+                "submodule.recurse=false",
+                "fetch.recurseSubmodules=false",
+                "push.recurseSubmodules=no",
+                "protocol.ext.allow=never",
+                "protocol.file.allow=never"));
+        if (Files.isDirectory(directory.resolve(".git"), LinkOption.NOFOLLOW_LINKS)) {
+            config.add("core.worktree=" + directory.toAbsolutePath().normalize());
+            config.add("core.bare=false");
+        }
+        config.addAll(additionalConfig);
+        for (String value : config) {
+            command.add("-c");
+            command.add(value);
+        }
+        command.addAll(arguments);
+        return Processes.run(directory, timeout, command, environment);
+    }
+
+    private void networkGit(Path directory, String remoteUrl, String what, String... arguments) {
+        GitCredentialStore.Credential credential = credentials == null || remoteUrl.isBlank()
+                ? null
+                : credentials.find(remoteUrl).orElse(null);
+        authenticatedGit(directory, NETWORK_TIMEOUT, List.of(arguments), remoteUrl, credential).orThrow(what);
+    }
+
+    private Processes.Result authenticatedGit(Path directory, Duration timeout,
+            List<String> arguments, String remoteUrl, GitCredentialStore.Credential credential) {
+        if (!allowInsecureGitHttp && remoteUrl.regionMatches(true, 0, "http://", 0, 7)) {
+            throw ForgeException.invalidArgument("Git network operations require HTTPS");
+        }
+        List<String> networkConfig = List.of(
+                "http.proxy=",
+                "http.curloptResolve=",
+                "http.extraHeader=",
+                "http.cookieFile=",
+                "http.saveCookies=false",
+                "http.followRedirects=false",
+                "http.sslVerify=true",
+                "http." + remoteUrl + ".proxy=",
+                "http." + remoteUrl + ".curloptResolve=",
+                "http." + remoteUrl + ".extraHeader=",
+                "http." + remoteUrl + ".cookieFile=",
+                "http." + remoteUrl + ".saveCookies=false",
+                "http." + remoteUrl + ".followRedirects=false",
+                "http." + remoteUrl + ".sslVerify=true");
+        if (credential == null) {
+            return git(directory, timeout, arguments, Map.of(), networkConfig);
+        }
+        AskPass askPass = createAskPassHelper(credential);
+        try {
+            Map<String, String> environment = Map.of(
+                    "GIT_ASKPASS", askPass.helper().toString(),
+                    "GIT_ASKPASS_REQUIRE", "force",
+                    "FORGE_GIT_AUTH_DIR", askPass.directory().toString());
+            return git(directory, timeout, arguments, environment, networkConfig);
+        } finally {
+            deleteAskPassHelper(askPass);
+        }
+    }
+
+    private record AskPass(Path directory, Path helper) { }
+
+    private static AskPass createAskPassHelper(GitCredentialStore.Credential credential) {
+        try {
+            Path directory = Files.createTempDirectory("forge-git-auth-");
+            setOwnerOnlyDirectory(directory);
+            Path username = directory.resolve("username");
+            Path secret = directory.resolve("secret");
+            Path helper = directory.resolve("askpass.sh");
+            createOwnerOnlyFile(username, credential.username());
+            createOwnerOnlyFile(secret, credential.password());
+            Files.writeString(helper, """
+                    #!/bin/sh
+                    case "$1" in
+                      *[Uu]sername*) cat "$FORGE_GIT_AUTH_DIR/username"; printf '\n' ;;
+                      *) cat "$FORGE_GIT_AUTH_DIR/secret"; printf '\n' ;;
+                    esac
+                    """, StandardCharsets.UTF_8);
+            try {
+                Files.setPosixFilePermissions(helper, Set.of(
+                        PosixFilePermission.OWNER_READ,
+                        PosixFilePermission.OWNER_WRITE,
+                        PosixFilePermission.OWNER_EXECUTE));
+            } catch (UnsupportedOperationException ignored) {
+                if (!helper.toFile().setExecutable(true, true)) {
+                    throw ForgeException.unavailable("Could not make Git authentication helper executable");
+                }
+            }
+            return new AskPass(directory, helper);
+        } catch (IOException e) {
+            throw ForgeException.unavailable("Could not create Git authentication helper");
+        }
+    }
+
+    private static void createOwnerOnlyFile(Path file, String value) throws IOException {
+        try {
+            Files.createFile(file, PosixFilePermissions.asFileAttribute(Set.of(
+                    PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)));
+        } catch (UnsupportedOperationException ignored) {
+            Files.createFile(file);
+        }
+        Files.writeString(file, value, StandardCharsets.UTF_8);
+    }
+
+    private static void setOwnerOnlyDirectory(Path directory) throws IOException {
+        try {
+            Files.setPosixFilePermissions(directory, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE));
+        } catch (UnsupportedOperationException ignored) {
+        }
+    }
+
+    private static void deleteAskPassHelper(AskPass askPass) {
+        try (var paths = Files.walk(askPass.directory())) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException e) {
+            log.debug("Could not fully remove temporary Git authentication helper");
+        }
+    }
+
+    private record RemotePolicy(
+            String trustedUrl,
+            List<String> fetchRefspecs) { }
+
+    private RemotePolicy fetchPolicy(Path directory, WorkspaceId workspace) {
+        String trustedUrl = validatedOriginUrl(directory, workspace);
+        List<String> fetchRefspecs = configValues(directory, "remote.origin.fetch");
+        if (fetchRefspecs.isEmpty()) {
+            throw ForgeException.conflict("Origin does not have a configured fetch refspec");
+        }
+        fetchRefspecs.forEach(GitSourceControlProvider::validateFetchRefspec);
+        return new RemotePolicy(trustedUrl, List.copyOf(fetchRefspecs));
+    }
+
+    private String validatedOriginUrl(Path directory, WorkspaceId workspace) {
+        String trustedUrl = trustedRemote(workspace);
+        List<String> originUrls = configValues(directory, "remote.origin.url");
+        if (originUrls.size() != 1 || !sameRepository(originUrls.get(0), trustedUrl)) {
+            throw ForgeException.conflict("Origin no longer matches the repository registered with Forge");
+        }
+        return trustedUrl;
+    }
+
+    static String selectedPushRemote(Path directory, String branch) {
+        String remote = configSingle(directory, "branch." + branch + ".pushremote", "");
+        if (remote.isEmpty()) {
+            remote = configSingle(directory, "remote.pushdefault", "");
+        }
+        if (remote.isEmpty()) {
+            remote = configSingle(directory, "branch." + branch + ".remote", "");
+        }
+        if (remote.isEmpty()) {
+            remote = "origin";
+        }
+        if (!REMOTE_NAME.matcher(remote).matches() || remote.contains("..")) {
+            throw ForgeException.conflict("Current branch has an unsupported push remote");
+        }
+        return remote;
+    }
+
+    static void validatePushDestination(Path directory, String remote, String trustedUrl) {
+        List<String> remoteUrls = configValues(directory, "remote." + remote + ".url");
+        if (remoteUrls.size() != 1 || !sameRepository(remoteUrls.get(0), trustedUrl)) {
+            throw ForgeException.conflict(
+                    "Configured push destination differs from the repository registered with Forge");
+        }
+        for (String pushUrl : configValues(directory, "remote." + remote + ".pushurl")) {
+            if (!sameRepository(pushUrl, trustedUrl)) {
+                throw ForgeException.conflict(
+                        "Configured push destination differs from the repository registered with Forge");
+            }
+        }
+        if (configBoolean(directory, "remote." + remote + ".mirror", false)) {
+            throw ForgeException.conflict("Mirror pushes are not supported by Forge source-control operations");
+        }
+    }
+
+    private static void addFetchOptions(List<String> command) {
+        command.add("--prune");
+        command.add("--no-prune-tags");
+        command.add("--no-tags");
+    }
+
+    static List<String> pushRefspecs(Path directory, String branch, String pushRemote) {
+        String safeRefspec = "HEAD:refs/heads/" + branch;
+        List<String> configured = configValues(directory, "remote." + pushRemote + ".push");
+        if (!configured.isEmpty()) {
+            if (configured.size() != 1 || !isSafeCurrentBranchPush(configured.get(0), branch)) {
+                throw ForgeException.conflict("Configured push refspec is not supported by Forge");
+            }
+            return List.of(safeRefspec);
+        }
+        defaultPushRefspecs(directory, branch, pushRemote);
+        return List.of(safeRefspec);
+    }
+
+    static List<String> defaultPushRefspecs(Path directory, String branch, String pushRemote) {
+        String mode = configSingle(directory, "push.default", "simple").toLowerCase(java.util.Locale.ROOT);
+        String branchRemote = configSingle(directory, "branch." + branch + ".remote", "");
+        boolean explicitPushRemote = !configSingle(directory, "branch." + branch + ".pushremote", "").isEmpty()
+                || !configSingle(directory, "remote.pushdefault", "").isEmpty();
+        return switch (mode) {
+            case "current" -> List.of("HEAD:refs/heads/" + branch);
+            case "upstream" -> {
+                if (branchRemote.isEmpty() || !pushRemote.equals(branchRemote)) {
+                    throw ForgeException.conflict("Push remote is not the current branch upstream remote");
+                }
+                yield List.of("HEAD:" + upstreamMergeRef(directory, branch, branchRemote));
+            }
+            case "simple" -> {
+                if (branchRemote.isEmpty()) {
+                    if (!explicitPushRemote) {
+                        throw ForgeException.conflict("Current branch has no upstream configured for push");
+                    }
+                } else if (pushRemote.equals(branchRemote)) {
+                    String mergeRef = upstreamMergeRef(directory, branch, branchRemote);
+                    if (!mergeRef.equals("refs/heads/" + branch)) {
+                        throw ForgeException.conflict("Current branch name does not match its configured upstream");
+                    }
+                }
+                yield List.of("HEAD:refs/heads/" + branch);
+            }
+            case "matching" -> throw ForgeException.conflict("Matching pushes are not supported by Forge");
+            case "nothing" -> throw ForgeException.conflict("Push is disabled by repository configuration");
+            default -> throw ForgeException.conflict("Unsupported push.default configuration");
+        };
+    }
+
+    private static String upstreamMergeRef(Path directory, String branch) {
+        return upstreamMergeRef(directory, branch, "origin");
+    }
+
+    private static String upstreamMergeRef(Path directory, String branch, String expectedRemote) {
+        String remote = configSingle(directory, "branch." + branch + ".remote", "");
+        if (!remote.equals(expectedRemote)) {
+            throw ForgeException.conflict("Current branch is not configured for the expected upstream remote");
+        }
+        String mergeRef = configSingle(directory, "branch." + branch + ".merge", "");
+        String expectedMergeRef = "refs/heads/" + branch;
+        if (!mergeRef.equals(expectedMergeRef) || !validRefName(directory, mergeRef)) {
+            throw ForgeException.conflict("Current branch must track the same-named origin branch");
+        }
+        return mergeRef;
+    }
+
+    static String trackingRef(List<String> refspecs, String remoteRef) {
+        String mapped = null;
+        boolean included = false;
+        for (String configured : refspecs) {
+            String refspec = configured;
+            if (refspec.startsWith("^")) {
+                if (refPatternMatches(refspec.substring(1), remoteRef)) {
+                    return null;
+                }
+                continue;
+            }
+            if (refspec.startsWith("+")) {
+                refspec = refspec.substring(1);
+            }
+            int colon = refspec.indexOf(':');
+            String source = colon < 0 ? refspec : refspec.substring(0, colon);
+            String destination = colon < 0 ? "" : refspec.substring(colon + 1);
+            String wildcard = wildcardValue(source, remoteRef);
+            if (wildcard == null) {
+                continue;
+            }
+            included = true;
+            if (!destination.isEmpty()) {
+                mapped = destination.contains("*") ? destination.replace("*", wildcard) : destination;
+            } else if (mapped == null) {
+                mapped = "";
+            }
+        }
+        return included ? (mapped == null ? "" : mapped) : null;
+    }
+
+    private static boolean refPatternMatches(String pattern, String ref) {
+        return wildcardValue(pattern, ref) != null;
+    }
+
+    private static String wildcardValue(String pattern, String ref) {
+        int star = pattern.indexOf('*');
+        if (star < 0) {
+            return pattern.equals(ref) ? "" : null;
+        }
+        if (pattern.indexOf('*', star + 1) >= 0) {
+            return null;
+        }
+        String prefix = pattern.substring(0, star);
+        String suffix = pattern.substring(star + 1);
+        if (!ref.startsWith(prefix) || !ref.endsWith(suffix)
+                || ref.length() < prefix.length() + suffix.length()) {
+            return null;
+        }
+        return ref.substring(prefix.length(), ref.length() - suffix.length());
+    }
+
+    static void validateFetchRefspec(String refspec) {
+        if (refspec == null || refspec.isBlank() || refspec.length() > MAX_PATH_CHARS
+                || refspec.indexOf('\0') >= 0 || refspec.startsWith("-")) {
+            throw ForgeException.conflict("Invalid Git fetch refspec");
+        }
+        if (refspec.startsWith("^")) {
+            String excluded = refspec.substring(1);
+            if (!isRemoteHeadPattern(excluded)) {
+                throw ForgeException.conflict("Unsupported Git fetch refspec");
+            }
+            return;
+        }
+
+        String value = refspec.startsWith("+") ? refspec.substring(1) : refspec;
+        int colon = value.indexOf(':');
+        if (colon <= 0 || colon != value.lastIndexOf(':')) {
+            throw ForgeException.conflict("Unsupported Git fetch refspec");
+        }
+        String source = value.substring(0, colon);
+        String destination = value.substring(colon + 1);
+        if (!isRemoteHeadPattern(source) || !isOriginTrackingPattern(destination)
+                || source.contains("*") != destination.contains("*")) {
+            throw ForgeException.conflict("Unsupported Git fetch refspec");
+        }
+    }
+
+    private static boolean isRemoteHeadPattern(String ref) {
+        return isValidRefPattern(ref, "refs/heads/");
+    }
+
+    private static boolean isOriginTrackingPattern(String ref) {
+        return isValidRefPattern(ref, "refs/remotes/origin/");
+    }
+
+    private static boolean isValidRefPattern(String ref, String prefix) {
+        if (!ref.startsWith(prefix) || ref.length() <= prefix.length() || ref.length() > MAX_PATH_CHARS) {
+            return false;
+        }
+        int star = ref.indexOf('*');
+        if (star != ref.lastIndexOf('*')) {
+            return false;
+        }
+        String suffix = ref.substring(prefix.length());
+        if (suffix.startsWith("/") || suffix.endsWith("/") || suffix.endsWith(".")
+                || suffix.contains("..") || suffix.contains("//") || suffix.contains("@{")) {
+            return false;
+        }
+        for (String component : suffix.split("/", -1)) {
+            if (component.isEmpty() || component.startsWith(".") || component.endsWith(".")
+                    || component.endsWith(".lock")) {
+                return false;
+            }
+        }
+        for (int i = 0; i < suffix.length(); i++) {
+            char ch = suffix.charAt(i);
+            if (!(Character.isLetterOrDigit(ch) || ch == '.' || ch == '_' || ch == '-'
+                    || ch == '/' || ch == '*')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean isSafeCurrentBranchPush(String refspec, String branch) {
+        if (refspec == null || refspec.isBlank() || refspec.length() > MAX_PATH_CHARS
+                || refspec.startsWith("+") || refspec.startsWith("-") || refspec.startsWith(":")) {
+            return false;
+        }
+        int colon = refspec.indexOf(':');
+        if (colon <= 0 || colon != refspec.lastIndexOf(':')) {
+            return false;
+        }
+        String source = refspec.substring(0, colon);
+        String destination = refspec.substring(colon + 1);
+        String branchRef = "refs/heads/" + branch;
+        return (source.equals("HEAD") || source.equals(branchRef)) && destination.equals(branchRef);
+    }
+
+    private static boolean validRefName(Path directory, String ref) {
+        return git(directory, LOCAL_TIMEOUT, "check-ref-format", ref).ok();
+    }
+
+    private static List<String> configValues(Path directory, String key) {
+        Processes.Result result = git(directory, LOCAL_TIMEOUT,
+                "config", "--local", "--no-includes", "--get-all", key);
+        if (!result.ok()) {
+            return List.of();
+        }
+        return result.output().lines().map(String::trim).filter(value -> !value.isEmpty()).toList();
+    }
+
+    private static String configSingle(Path directory, String key, String fallback) {
+        List<String> values = configValues(directory, key);
+        if (values.isEmpty()) {
+            return fallback;
+        }
+        if (values.size() != 1) {
+            throw ForgeException.conflict("Ambiguous Git repository configuration");
+        }
+        return values.get(0);
+    }
+
+    private static boolean configBoolean(Path directory, String key, boolean fallback) {
+        String value = configSingle(directory, key, "");
+        if (value.isEmpty()) {
+            return fallback;
+        }
+        return switch (value.toLowerCase(java.util.Locale.ROOT)) {
+            case "true", "yes", "on", "1" -> true;
+            case "false", "no", "off", "0" -> false;
+            default -> throw ForgeException.conflict("Invalid boolean Git repository configuration");
+        };
+    }
+
+    private static boolean sameRepository(String configuredUrl, String trustedUrl) {
+        try {
+            return GitCredentialStore.normalize(configuredUrl).equals(GitCredentialStore.normalize(trustedUrl));
+        } catch (ForgeException e) {
+            return false;
+        }
+    }
+
+    private String trustedRemote(WorkspaceId workspace) {
+        if (remotes == null) {
+            throw ForgeException.conflict("Repository remote is not registered with Forge");
+        }
+        return remotes.require(workspace);
+    }
+
+    private static String currentBranch(Path directory) {
+        Processes.Result result = git(directory, LOCAL_TIMEOUT, "symbolic-ref", "--short", "HEAD");
+        String branch = result.ok() ? result.output().trim() : "";
+        if (!BRANCH.matcher(branch).matches() || branch.contains("..")) {
+            throw ForgeException.conflict("A local branch is required for this operation");
+        }
+        return branch;
+    }
+
+    private static void validateRepository(Path directory) {
+        Path metadata = directory.resolve(".git");
+        if (!Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(metadata)) {
+            throw ForgeException.conflict("Workspace does not contain a supported Git repository");
+        }
+        Path configFile = metadata.resolve("config");
+        if (Files.isSymbolicLink(configFile)) {
+            throw ForgeException.conflict("Repository Git configuration is not supported");
+        }
+        Processes.Result result = git(directory, LOCAL_TIMEOUT, "config", "--local", "--no-includes",
+                "--name-only", "--get-regexp", ".*");
+        if (!result.ok()) {
+            throw ForgeException.conflict("Repository Git configuration could not be validated");
+        }
+        for (String key : result.output().lines().map(String::trim).filter(value -> !value.isEmpty()).toList()) {
+            if (UNSAFE_CONFIG_KEY.matcher(key).matches()) {
+                throw ForgeException.conflict("Repository Git configuration is not allowed for source-control operations");
+            }
+        }
     }
 
     private Path repository(WorkspaceId workspace) {
-        return workspaces.directory(workspace)
+        Path directory = workspaces.directory(workspace)
                 .orElseThrow(() -> ForgeException.unavailable("Workspace is not open locally"));
+        validateRepository(directory);
+        return directory;
     }
 
     /** Refuses anything that could be read as an option rather than a path. */

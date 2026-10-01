@@ -8,6 +8,7 @@ import dev.forge.auth.SessionService;
 import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
+import dev.forge.core.command.CommandDescriptor;
 import dev.forge.core.command.CommandExecutor;
 import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
@@ -26,6 +27,8 @@ import dev.forge.filesystem.FileService;
 import dev.forge.infra.BufferWordLanguageProvider;
 import dev.forge.infra.Config;
 import dev.forge.infra.FileStateStore;
+import dev.forge.infra.GitCredentialStore;
+import dev.forge.infra.GitRemoteStore;
 import dev.forge.infra.GitSourceControlProvider;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
@@ -53,11 +56,13 @@ import dev.forge.transport.Gateway;
 import dev.forge.transport.HttpTransport;
 import dev.forge.transport.Json;
 import dev.forge.transport.StaticAssets;
+import dev.forge.workspace.Workspace;
 import dev.forge.workspace.WorkspaceCommands;
 import dev.forge.workspace.WorkspaceEvents;
 import dev.forge.workspace.WorkspaceService;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -123,8 +128,12 @@ public final class ForgeApplication implements Lifecycle.Component {
                 new ProcessTerminalProvider(workspaceProvider, config.terminalsEnabled()),
                 events, config.shell());
         TaskService tasks = new TaskService(List.of(new WorkspaceTaskProvider(workspaces)), terminals, events);
+        GitCredentialStore credentialStore = new GitCredentialStore(stateStore);
+        GitRemoteStore remoteStore = new GitRemoteStore(stateStore);
+        GitSourceControlProvider gitProvider = new GitSourceControlProvider(
+                workspaceProvider, credentialStore, remoteStore, config.allowInsecureGitHttp());
         SourceControlService scm =
-                new SourceControlService(List.of(new GitSourceControlProvider(workspaceProvider)), events);
+                new SourceControlService(List.of(gitProvider), events);
         DebugService debug = new DebugService(events);
 
         ExtensionRegistry extensions =
@@ -142,6 +151,9 @@ public final class ForgeApplication implements Lifecycle.Component {
         new TaskCommands(tasks).register(commandRegistry, queries, contributions);
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
         new ScmCommands(scm).register(commandRegistry, queries, contributions);
+
+        registerCredentialCommands(commandRegistry, queries, credentialStore, remoteStore, gitProvider, workspaces, config);
+
         new DebugCommands(debug).register(commandRegistry, queries, contributions);
         new WorkbenchQueries(commandRegistry, executor, contributions, extensions, languages,
                 config.terminalsEnabled()).register(queries, commandRegistry);
@@ -311,5 +323,95 @@ public final class ForgeApplication implements Lifecycle.Component {
         contributions.addView(ContributionRegistry.View.of("terminal", "Terminal", "panel", "terminal", 10));
         contributions.addView(ContributionRegistry.View.of("problems", "Problems", "panel", "warning", 20));
         contributions.addView(ContributionRegistry.View.of("tasks", "Tasks", "panel", "checklist", 30));
+    }
+
+
+    private static void registerCredentialCommands(
+            CommandRegistry commands,
+            QueryRegistry queries,
+            GitCredentialStore credentialStore,
+            GitRemoteStore remoteStore,
+            GitSourceControlProvider gitProvider,
+            WorkspaceService workspaces,
+            Config config) {
+
+        commands.register(
+                CommandDescriptor.of("scm.clone", "Source Control", "Clone Repository")
+                        .withArguments(
+                                new CommandDescriptor.Argument("url", "string", "Remote repository URL"),
+                                new CommandDescriptor.Argument("name", "string", "Local workspace name"))
+                        .asSensitive(),
+                ctx -> {
+                    String url = ctx.args().requiredString("url");
+                    String name = ctx.args().requiredString("name");
+                    String branch = ctx.args().string("branch").orElse(null);
+                    String username = ctx.args().string("username").orElse("");
+                    String password = ctx.args().string("password").orElse("");
+                    boolean saveCredential = ctx.args().bool("saveCredential", false);
+                    if (username.isBlank() != password.isBlank()) {
+                        throw dev.forge.core.ForgeException.invalidArgument(
+                                "Username and password/token must be provided together");
+                    }
+                    GitCredentialStore.Credential oneShot = username.isBlank()
+                            ? null
+                            : new GitCredentialStore.Credential(username, password);
+
+                    Workspace ws = workspaces.create(name, "local", Map.of());
+                    java.nio.file.Path targetDir = config.workspaceRoot().resolve(ws.location().path());
+                    try {
+                        gitProvider.cloneRepository(targetDir, url, branch, oneShot);
+                    } catch (RuntimeException e) {
+                        deleteFailedClone(targetDir);
+                        throw e;
+                    }
+                    remoteStore.bind(ws.id(), url);
+                    if (saveCredential && oneShot != null) {
+                        credentialStore.store(url, oneShot.username(), oneShot.password());
+                    }
+                    workspaces.open(ws.id(), ctx.sessionId());
+                    return null;
+                });
+
+        commands.register(
+                CommandDescriptor.of("scm.addCredential", "Source Control", "Add Git Credential")
+                        .withArguments(
+                                new CommandDescriptor.Argument("repositoryUrl", "string", "HTTP(S) repository URL"),
+                                new CommandDescriptor.Argument("username", "string", "Username"),
+                                new CommandDescriptor.Argument("password", "string", "Password or personal access token"))
+                        .asSensitive(),
+                ctx -> {
+                    credentialStore.store(
+                            ctx.args().requiredString("repositoryUrl"),
+                            ctx.args().requiredString("username"),
+                            ctx.args().requiredString("password"));
+                    return null;
+                });
+
+        commands.register(
+                CommandDescriptor.of("scm.removeCredential", "Source Control", "Remove Git Credential")
+                        .withArguments(new CommandDescriptor.Argument("repositoryUrl", "string", "Repository URL to remove"))
+                        .asSensitive(),
+                ctx -> {
+                    credentialStore.remove(ctx.args().requiredString("repositoryUrl"));
+                    return null;
+                });
+
+        queries.register(
+                dev.forge.core.query.QueryRegistry.QueryDescriptor.of(
+                        "scm.listCredentials", "Stored Git repository URLs and usernames"),
+                (ctx, args) -> credentialStore.list());
+    }
+
+    private static void deleteFailedClone(java.nio.file.Path targetDir) {
+        try (var paths = java.nio.file.Files.walk(targetDir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    java.nio.file.Files.deleteIfExists(path);
+                } catch (java.io.IOException ignored) {
+                }
+            });
+        } catch (java.io.IOException ignored) {
+            log.debug("Could not fully remove failed clone workspace");
+        }
     }
 }
