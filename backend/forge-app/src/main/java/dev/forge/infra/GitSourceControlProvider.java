@@ -46,18 +46,22 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     private static final Pattern REMOTE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,199}");
     private static final Pattern UNSAFE_CONFIG_KEY = Pattern.compile(
             "^(?:include(?:if)?\\..*|"
-                    + "core\\.(?:fsmonitor|sshcommand|gitproxy|alternaterefscommand|hookspath|worktree|editor)|"
+                    + "core\\.(?:askpass|fsmonitor|sshcommand|gitproxy|alternaterefscommand|hookspath|worktree|editor)|"
                     + "credential\\..*|"
                     + "filter\\..*\\.(?:clean|smudge|process)|"
                     + "diff\\..*\\.(?:command|textconv)|"
                     + "merge\\..*\\.driver|"
                     + "branch\\..*\\.mergeoptions|"
                     + "gpg(?:\\..*)?\\.program|"
+                    + "gc\\.recentobjectshook|"
+                    + "fetch\\.bundleuri|"
+                    + "transfer\\.bundleuri|"
                     + "url\\..*\\.(?:insteadof|pushinsteadof)|"
                     + "http\\..*|"
-                    + "remote\\..*\\.(?:proxy|proxyauthmethod|uploadpack|receivepack|vcs)|"
+                    + "remote\\..*\\.(?:proxy|proxyauthmethod|uploadpack|receivepack|vcs|promisor|partialclonefilter)|"
+                    + "push\\.(?:followtags|pushoption)|"
                     + "submodule\\..*\\.update|"
-                    + "extensions\\.worktreeconfig)$",
+                    + "extensions\\.(?:worktreeconfig|partialclone))$",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_PATHS = 256;
     private static final int MAX_PATH_CHARS = 4096;
@@ -264,7 +268,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         Path directory = repository(workspace);
         RemotePolicy policy = fetchPolicy(directory, workspace);
         List<String> command = new ArrayList<>(List.of("fetch"));
-        addFetchOptions(command, policy);
+        addFetchOptions(command);
         command.add(policy.trustedUrl());
         command.addAll(policy.fetchRefspecs());
         networkGit(directory, policy.trustedUrl(), "Fetch", command.toArray(String[]::new));
@@ -277,21 +281,16 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         String branch = currentBranch(directory);
         String mergeRef = upstreamMergeRef(directory, branch);
         String trackingRef = trackingRef(policy.fetchRefspecs(), mergeRef);
-        if (trackingRef == null) {
+        if (trackingRef == null || trackingRef.isBlank()) {
             throw ForgeException.conflict("Configured upstream is excluded by the origin fetch refspec");
         }
 
         List<String> command = new ArrayList<>(List.of("fetch"));
-        addFetchOptions(command, policy);
+        addFetchOptions(command);
         command.add(policy.trustedUrl());
-        if (trackingRef.isBlank()) {
-            command.add(mergeRef);
-        } else {
-            command.add(mergeRef + ":" + trackingRef);
-        }
+        command.add(mergeRef + ":" + trackingRef);
         networkGit(directory, policy.trustedUrl(), "Pull", command.toArray(String[]::new));
-        git(directory, LOCAL_TIMEOUT, "merge", "--ff-only",
-                trackingRef.isBlank() ? "FETCH_HEAD" : trackingRef).orThrow("Pull");
+        git(directory, LOCAL_TIMEOUT, "merge", "--ff-only", trackingRef).orThrow("Pull");
     }
 
     @Override
@@ -302,7 +301,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         String pushRemote = selectedPushRemote(directory, branch);
         validatePushDestination(directory, pushRemote, trustedUrl);
         List<String> refspecs = pushRefspecs(directory, branch, pushRemote);
-        List<String> command = new ArrayList<>(List.of("push", trustedUrl));
+        List<String> command = new ArrayList<>(List.of("push", "--no-follow-tags", "--no-signed", trustedUrl));
         command.addAll(refspecs);
         networkGit(directory, trustedUrl, "Push", command.toArray(String[]::new));
     }
@@ -378,6 +377,10 @@ public final class GitSourceControlProvider implements SourceControlProvider {
                 "commit.gpgSign=false",
                 "tag.gpgSign=false",
                 "push.gpgSign=false",
+                "push.followTags=false",
+                "push.pushOption=",
+                "gc.auto=0",
+                "maintenance.auto=0",
                 "submodule.recurse=false",
                 "fetch.recurseSubmodules=false",
                 "push.recurseSubmodules=no",
@@ -504,10 +507,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     private record RemotePolicy(
             String trustedUrl,
-            List<String> fetchRefspecs,
-            String tagOption,
-            boolean prune,
-            boolean pruneTags) { }
+            List<String> fetchRefspecs) { }
 
     private RemotePolicy fetchPolicy(Path directory, WorkspaceId workspace) {
         String trustedUrl = validatedOriginUrl(directory, workspace);
@@ -515,17 +515,8 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         if (fetchRefspecs.isEmpty()) {
             throw ForgeException.conflict("Origin does not have a configured fetch refspec");
         }
-        fetchRefspecs.forEach(refspec -> validateRefspec(refspec, true));
-
-        String tagOption = configSingle(directory, "remote.origin.tagopt", "");
-        if (!tagOption.isEmpty() && !tagOption.equals("--tags") && !tagOption.equals("--no-tags")) {
-            throw ForgeException.conflict("Unsupported origin tag configuration");
-        }
-        boolean prune = configBoolean(directory, "remote.origin.prune",
-                configBoolean(directory, "fetch.prune", false));
-        boolean pruneTags = configBoolean(directory, "remote.origin.prunetags",
-                configBoolean(directory, "fetch.prunetags", false));
-        return new RemotePolicy(trustedUrl, List.copyOf(fetchRefspecs), tagOption, prune, pruneTags);
+        fetchRefspecs.forEach(GitSourceControlProvider::validateFetchRefspec);
+        return new RemotePolicy(trustedUrl, List.copyOf(fetchRefspecs));
     }
 
     private String validatedOriginUrl(Path directory, WorkspaceId workspace) {
@@ -571,18 +562,23 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         }
     }
 
-    private static void addFetchOptions(List<String> command, RemotePolicy policy) {
-        command.add(policy.prune() ? "--prune" : "--no-prune");
-        command.add(policy.pruneTags() ? "--prune-tags" : "--no-prune-tags");
-        if (!policy.tagOption().isEmpty()) {
-            command.add(policy.tagOption());
-        }
+    private static void addFetchOptions(List<String> command) {
+        command.add("--prune");
+        command.add("--no-prune-tags");
+        command.add("--no-tags");
     }
 
     static List<String> pushRefspecs(Path directory, String branch, String pushRemote) {
+        String safeRefspec = "HEAD:refs/heads/" + branch;
         List<String> configured = configValues(directory, "remote." + pushRemote + ".push");
-        configured.forEach(refspec -> validateRefspec(refspec, false));
-        return configured.isEmpty() ? defaultPushRefspecs(directory, branch, pushRemote) : List.copyOf(configured);
+        if (!configured.isEmpty()) {
+            if (configured.size() != 1 || !isSafeCurrentBranchPush(configured.get(0), branch)) {
+                throw ForgeException.conflict("Configured push refspec is not supported by Forge");
+            }
+            return List.of(safeRefspec);
+        }
+        defaultPushRefspecs(directory, branch, pushRemote);
+        return List.of(safeRefspec);
     }
 
     static List<String> defaultPushRefspecs(Path directory, String branch, String pushRemote) {
@@ -611,7 +607,7 @@ public final class GitSourceControlProvider implements SourceControlProvider {
                 }
                 yield List.of("HEAD:refs/heads/" + branch);
             }
-            case "matching" -> List.of(":");
+            case "matching" -> throw ForgeException.conflict("Matching pushes are not supported by Forge");
             case "nothing" -> throw ForgeException.conflict("Push is disabled by repository configuration");
             default -> throw ForgeException.conflict("Unsupported push.default configuration");
         };
@@ -627,8 +623,9 @@ public final class GitSourceControlProvider implements SourceControlProvider {
             throw ForgeException.conflict("Current branch is not configured for the expected upstream remote");
         }
         String mergeRef = configSingle(directory, "branch." + branch + ".merge", "");
-        if (!mergeRef.startsWith("refs/heads/") || !validRefName(directory, mergeRef)) {
-            throw ForgeException.conflict("Current branch has an invalid upstream merge ref");
+        String expectedMergeRef = "refs/heads/" + branch;
+        if (!mergeRef.equals(expectedMergeRef) || !validRefName(directory, mergeRef)) {
+            throw ForgeException.conflict("Current branch must track the same-named origin branch");
         }
         return mergeRef;
     }
@@ -685,46 +682,82 @@ public final class GitSourceControlProvider implements SourceControlProvider {
         return ref.substring(prefix.length(), ref.length() - suffix.length());
     }
 
-    private static void validateRefspec(String refspec, boolean allowNegative) {
+    static void validateFetchRefspec(String refspec) {
         if (refspec == null || refspec.isBlank() || refspec.length() > MAX_PATH_CHARS
                 || refspec.indexOf('\0') >= 0 || refspec.startsWith("-")) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+            throw ForgeException.conflict("Invalid Git fetch refspec");
         }
-        String value = refspec;
-        if (value.startsWith("^")) {
-            if (!allowNegative || value.length() == 1 || value.indexOf(':') >= 0) {
-                throw ForgeException.conflict("Invalid Git remote refspec");
-            }
-            value = value.substring(1);
-        } else if (value.startsWith("+")) {
-            value = value.substring(1);
-        }
-        if (value.equals(":")) {
-            if (allowNegative) {
-                throw ForgeException.conflict("Invalid Git remote refspec");
+        if (refspec.startsWith("^")) {
+            String excluded = refspec.substring(1);
+            if (!isRemoteHeadPattern(excluded)) {
+                throw ForgeException.conflict("Unsupported Git fetch refspec");
             }
             return;
         }
+
+        String value = refspec.startsWith("+") ? refspec.substring(1) : refspec;
         int colon = value.indexOf(':');
-        if (colon != value.lastIndexOf(':')) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+        if (colon <= 0 || colon != value.lastIndexOf(':')) {
+            throw ForgeException.conflict("Unsupported Git fetch refspec");
         }
-        String source = colon < 0 ? value : value.substring(0, colon);
-        String destination = colon < 0 ? "" : value.substring(colon + 1);
-        if (source.isEmpty() && allowNegative) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+        String source = value.substring(0, colon);
+        String destination = value.substring(colon + 1);
+        if (!isRemoteHeadPattern(source) || !isOriginTrackingPattern(destination)
+                || source.contains("*") != destination.contains("*")) {
+            throw ForgeException.conflict("Unsupported Git fetch refspec");
         }
-        if (source.indexOf('*') != source.lastIndexOf('*')
-                || destination.indexOf('*') != destination.lastIndexOf('*')
-                || (source.contains("*") != destination.contains("*") && !destination.isEmpty())) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+    }
+
+    private static boolean isRemoteHeadPattern(String ref) {
+        return isValidRefPattern(ref, "refs/heads/");
+    }
+
+    private static boolean isOriginTrackingPattern(String ref) {
+        return isValidRefPattern(ref, "refs/remotes/origin/");
+    }
+
+    private static boolean isValidRefPattern(String ref, String prefix) {
+        if (!ref.startsWith(prefix) || ref.length() <= prefix.length() || ref.length() > MAX_PATH_CHARS) {
+            return false;
         }
-        if (!source.isEmpty() && !source.equals("HEAD") && !source.startsWith("refs/")) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+        int star = ref.indexOf('*');
+        if (star != ref.lastIndexOf('*')) {
+            return false;
         }
-        if (!destination.isEmpty() && !destination.startsWith("refs/")) {
-            throw ForgeException.conflict("Invalid Git remote refspec");
+        String suffix = ref.substring(prefix.length());
+        if (suffix.startsWith("/") || suffix.endsWith("/") || suffix.endsWith(".")
+                || suffix.contains("..") || suffix.contains("//") || suffix.contains("@{")) {
+            return false;
         }
+        for (String component : suffix.split("/", -1)) {
+            if (component.isEmpty() || component.startsWith(".") || component.endsWith(".")
+                    || component.endsWith(".lock")) {
+                return false;
+            }
+        }
+        for (int i = 0; i < suffix.length(); i++) {
+            char ch = suffix.charAt(i);
+            if (!(Character.isLetterOrDigit(ch) || ch == '.' || ch == '_' || ch == '-'
+                    || ch == '/' || ch == '*')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean isSafeCurrentBranchPush(String refspec, String branch) {
+        if (refspec == null || refspec.isBlank() || refspec.length() > MAX_PATH_CHARS
+                || refspec.startsWith("+") || refspec.startsWith("-") || refspec.startsWith(":")) {
+            return false;
+        }
+        int colon = refspec.indexOf(':');
+        if (colon <= 0 || colon != refspec.lastIndexOf(':')) {
+            return false;
+        }
+        String source = refspec.substring(0, colon);
+        String destination = refspec.substring(colon + 1);
+        String branchRef = "refs/heads/" + branch;
+        return (source.equals("HEAD") || source.equals(branchRef)) && destination.equals(branchRef);
     }
 
     private static boolean validRefName(Path directory, String ref) {
