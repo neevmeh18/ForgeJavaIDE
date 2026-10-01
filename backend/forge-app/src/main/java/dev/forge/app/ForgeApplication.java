@@ -104,8 +104,8 @@ public final class ForgeApplication implements Lifecycle.Component {
         SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
                 config.sessionMaxLifetime());
         FileService files = new FileService(workspaces, events, config.maxFileBytes());
-        EditorService editors = new EditorService(files, events);
         SettingsService settings = new SettingsService(stateStore, events);
+        EditorService editors = new EditorService(files, events, settings);
 
         // The language feature reads live buffers through a lambda rather than importing the
         // editor, which keeps the package dependency one-way.
