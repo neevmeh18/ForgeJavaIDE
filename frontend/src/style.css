@@ -866,3 +866,72 @@ button:focus-visible {
 .toast-close {
   color: var(--text-muted);
 }
+
+.scm-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 85vh;
+  overflow: auto;
+  padding: 18px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.scm-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.scm-dialog > label:not(.scm-checkbox-row) {
+  display: block;
+  margin: 10px 0 4px;
+  font-weight: 600;
+}
+
+.scm-dialog h3,
+.scm-dialog h4 {
+  margin: 0 0 8px;
+}
+
+.scm-dialog h4 {
+  margin-top: 18px;
+}
+
+.scm-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.scm-dialog-actions,
+.scm-credential-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.scm-dialog-actions {
+  margin-top: 16px;
+}
+
+.scm-credential-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.scm-credential-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.scm-credential-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+}

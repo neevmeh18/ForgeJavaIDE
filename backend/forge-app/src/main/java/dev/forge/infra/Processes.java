@@ -37,11 +37,18 @@ final class Processes {
     private Processes() { }
 
     static Result run(Path directory, java.time.Duration timeout, List<String> command) {
-        if (!SLOTS.tryAcquire()) throw ForgeException.unavailable("Too many helper processes");
-        try { return runBounded(directory, timeout, command); } finally { SLOTS.release(); }
+        return run(directory, timeout, command, Map.of());
     }
 
-    private static Result runBounded(Path directory, java.time.Duration timeout, List<String> command) {
+    static Result run(Path directory, java.time.Duration timeout, List<String> command,
+            Map<String, String> environmentOverrides) {
+        if (!SLOTS.tryAcquire()) throw ForgeException.unavailable("Too many helper processes");
+        try { return runBounded(directory, timeout, command, environmentOverrides); }
+        finally { SLOTS.release(); }
+    }
+
+    private static Result runBounded(Path directory, java.time.Duration timeout, List<String> command,
+            Map<String, String> environmentOverrides) {
         SafePaths.noLinks(directory);
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(directory.toFile());
@@ -54,6 +61,12 @@ final class Processes {
         environment.put("LANG", "C.UTF-8");
         environment.put("GIT_TERMINAL_PROMPT", "0");
         environment.put("GIT_ASKPASS", "");
+        for (var entry : environmentOverrides.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank() || entry.getValue() == null) {
+                throw ForgeException.invalidArgument("Invalid helper-process environment override");
+            }
+            environment.put(entry.getKey(), entry.getValue());
+        }
 
         Process process;
         try {

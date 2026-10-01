@@ -10,12 +10,17 @@ import dev.forge.scm.ScmTypes.Commit;
 import dev.forge.scm.ScmTypes.Diff;
 import dev.forge.scm.ScmTypes.RepositoryStatus;
 import dev.forge.scm.SourceControlProvider;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -43,9 +48,15 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     private static final String SEP = String.valueOf((char) 0x1f);
 
     private final LocalWorkspaceProvider workspaces;
+    private final GitCredentialStore credentials;
 
     public GitSourceControlProvider(LocalWorkspaceProvider workspaces) {
+        this(workspaces, null);
+    }
+
+    public GitSourceControlProvider(LocalWorkspaceProvider workspaces, GitCredentialStore credentials) {
         this.workspaces = workspaces;
+        this.credentials = credentials;
     }
 
     @Override
@@ -218,17 +229,54 @@ public final class GitSourceControlProvider implements SourceControlProvider {
 
     @Override
     public void fetch(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "fetch", "--prune").orThrow("Fetch");
+        Path directory = repository(workspace);
+        String remoteUrl = getRemoteUrl(workspace);
+        networkGit(directory, remoteUrl, "Fetch", "fetch", "--prune");
     }
 
     @Override
     public void pull(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "pull", "--ff-only").orThrow("Pull");
+        Path directory = repository(workspace);
+        String remoteUrl = getRemoteUrl(workspace);
+        networkGit(directory, remoteUrl, "Pull", "pull", "--ff-only");
     }
 
     @Override
     public void push(WorkspaceId workspace) {
-        git(repository(workspace), NETWORK_TIMEOUT, "push").orThrow("Push");
+        Path directory = repository(workspace);
+        String remoteUrl = getRemoteUrl(workspace, true);
+        networkGit(directory, remoteUrl, "Push", "push");
+    }
+
+    public Path cloneRepository(Path targetDir, String remoteUrl, String branch) {
+        GitCredentialStore.Credential credential = credentials == null
+                ? null
+                : credentials.find(remoteUrl).orElse(null);
+        return cloneRepository(targetDir, remoteUrl, branch, credential);
+    }
+
+    public Path cloneRepository(Path targetDir, String remoteUrl, String branch,
+            GitCredentialStore.Credential credential) {
+        Path dir = targetDir.normalize();
+        GitCredentialStore.Credential effectiveCredential = credential;
+        if (effectiveCredential == null && credentials != null) {
+            effectiveCredential = credentials.find(remoteUrl).orElse(null);
+        }
+        if (effectiveCredential != null) {
+            GitCredentialStore.normalize(remoteUrl);
+        }
+        List<String> args = new ArrayList<>(List.of("clone"));
+        if (branch != null && !branch.isBlank()) {
+            if (!BRANCH.matcher(branch).matches() || branch.contains("..")) {
+                throw ForgeException.invalidArgument("Invalid branch name");
+            }
+            args.add("--branch");
+            args.add(branch);
+        }
+        args.add(remoteUrl);
+        args.add(dir.toString());
+        authenticatedGit(dir.getParent(), NETWORK_TIMEOUT, args, effectiveCredential).orThrow("Clone");
+        return dir;
     }
 
     private void run(WorkspaceId workspace, String what, List<String> verb, List<String> paths) {
@@ -241,6 +289,15 @@ public final class GitSourceControlProvider implements SourceControlProvider {
     }
 
     private static Processes.Result git(Path directory, Duration timeout, String... arguments) {
+        return git(directory, timeout, List.of(arguments), Map.of());
+    }
+
+    private static Processes.Result git(Path directory, Duration timeout, List<String> arguments) {
+        return git(directory, timeout, arguments, Map.of());
+    }
+
+    private static Processes.Result git(Path directory, Duration timeout, List<String> arguments,
+            Map<String, String> environment) {
         List<String> command = new ArrayList<>(List.of("git", "--literal-pathspecs", "-c", "core.quotePath=false"));
         command.addAll(List.of("-c", "core.hooksPath=/dev/null",
                 "-c", "core.pager=cat",
@@ -248,8 +305,75 @@ public final class GitSourceControlProvider implements SourceControlProvider {
                 "-c", "pager.diff=false",
                 "-c", "diff.external=",
                 "-c", "protocol.ext.allow=never"));
-        command.addAll(List.of(arguments));
-        return Processes.run(directory, timeout, command);
+        command.addAll(arguments);
+        return Processes.run(directory, timeout, command, environment);
+    }
+
+    private void networkGit(Path directory, String remoteUrl, String what, String... arguments) {
+        GitCredentialStore.Credential credential = credentials == null || remoteUrl.isBlank()
+                ? null
+                : credentials.find(remoteUrl).orElse(null);
+        authenticatedGit(directory, NETWORK_TIMEOUT, List.of(arguments), credential).orThrow(what);
+    }
+
+    private static Processes.Result authenticatedGit(Path directory, Duration timeout,
+            List<String> arguments, GitCredentialStore.Credential credential) {
+        if (credential == null) {
+            return git(directory, timeout, arguments);
+        }
+        Path askPass = createAskPassHelper();
+        try {
+            Map<String, String> environment = Map.of(
+                    "GIT_ASKPASS", askPass.toString(),
+                    "GIT_ASKPASS_REQUIRE", "force",
+                    "FORGE_GIT_USERNAME", credential.username(),
+                    "FORGE_GIT_SECRET", credential.password());
+            return git(directory, timeout, arguments, environment);
+        } finally {
+            try {
+                Files.deleteIfExists(askPass);
+            } catch (IOException e) {
+                log.debug("Could not remove temporary Git askpass helper");
+            }
+        }
+    }
+
+    private static Path createAskPassHelper() {
+        try {
+            Path helper = Files.createTempFile("forge-git-askpass-", ".sh");
+            Files.writeString(helper, """
+                    #!/bin/sh
+                    case "$1" in
+                      *[Uu]sername*) printf '%s\n' "$FORGE_GIT_USERNAME" ;;
+                      *) printf '%s\n' "$FORGE_GIT_SECRET" ;;
+                    esac
+                    """, StandardCharsets.UTF_8);
+            try {
+                Files.setPosixFilePermissions(helper, Set.of(
+                        PosixFilePermission.OWNER_READ,
+                        PosixFilePermission.OWNER_WRITE,
+                        PosixFilePermission.OWNER_EXECUTE));
+            } catch (UnsupportedOperationException ignored) {
+                if (!helper.toFile().setExecutable(true, true)) {
+                    throw ForgeException.unavailable("Could not make Git authentication helper executable");
+                }
+            }
+            return helper;
+        } catch (IOException e) {
+            throw ForgeException.unavailable("Could not create Git authentication helper");
+        }
+    }
+
+    private String getRemoteUrl(WorkspaceId workspace) {
+        return getRemoteUrl(workspace, false);
+    }
+
+    private String getRemoteUrl(WorkspaceId workspace, boolean push) {
+        Path dir = repository(workspace);
+        Processes.Result result = push
+                ? git(dir, LOCAL_TIMEOUT, "remote", "get-url", "--push", "origin")
+                : git(dir, LOCAL_TIMEOUT, "remote", "get-url", "origin");
+        return result.ok() ? result.output().trim() : "";
     }
 
     private Path repository(WorkspaceId workspace) {

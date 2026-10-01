@@ -25,6 +25,8 @@ services:
     volumes:
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
       - forge-data:/data
+    networks:
+      - forge-dev
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -42,3 +44,7 @@ services:
 
 volumes:
   forge-data:
+
+networks:
+  forge-dev:
+    name: forge-dev
