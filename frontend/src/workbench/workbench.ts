@@ -16,7 +16,6 @@ import { ScmView } from './scmView';
 import { SearchView } from './searchView';
 import { ExtensionsView, SettingsView } from './sidePanels';
 import { StatusBar } from './statusBar';
-import { WorkspaceAccessView } from './workspaceAccessView';
 
 /**
  * Assembles the workbench and owns the frontend's visual state.
@@ -58,7 +57,6 @@ export class Workbench implements WorkbenchContext {
   private readonly scm: ScmView;
   private readonly extensions: ExtensionsView;
   private readonly settings: SettingsView;
-  private readonly access: WorkspaceAccessView;
   private activeView = 'explorer';
 
   constructor(
@@ -81,7 +79,6 @@ export class Workbench implements WorkbenchContext {
     this.scm = new ScmView(this);
     this.extensions = new ExtensionsView(this);
     this.settings = new SettingsView(this);
-    this.access = new WorkspaceAccessView(this);
 
     client.onEvent((event) => this.fanOut(event));
     this.registerLocalCommands();
@@ -112,7 +109,7 @@ export class Workbench implements WorkbenchContext {
   // ---- startup ------------------------------------------------------------------------
 
   /** Loads everything the workbench renders itself from, then opens a workspace. */
-  async start(user: string, workspaceId?: string): Promise<void> {
+  async start(user: string): Promise<void> {
     this.state.user = user;
     this.statusBar.setUser(user);
     this.client.connectEvents();
@@ -141,11 +138,7 @@ export class Workbench implements WorkbenchContext {
     // so the workbench re-reads the registries rather than showing a stale catalogue.
     this.on('extension.activated', () => void this.reloadContributions());
     await this.applySettings();
-    if (workspaceId) {
-      await this.openWorkspace(workspaceId);
-    } else {
-      await this.openInitialWorkspace();
-    }
+    await this.openInitialWorkspace();
     this.showSidebarView('explorer');
   }
 
@@ -251,10 +244,6 @@ export class Workbench implements WorkbenchContext {
         break;
       case 'debug':
         this.sidebar.append(this.debugView());
-        break;
-      case 'access':
-        this.sidebar.append(this.access.element);
-        void this.access.refresh();
         break;
       default:
         this.sidebar.append(this.explorer.element);

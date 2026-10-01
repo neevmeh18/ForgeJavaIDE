@@ -1,7 +1,6 @@
 package dev.forge.app;
 
 import dev.forge.auth.AuthCommands;
-import dev.forge.auth.AuthEvents;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.Authorizer;
 import dev.forge.auth.SessionService;
@@ -53,8 +52,6 @@ import dev.forge.transport.Gateway;
 import dev.forge.transport.HttpTransport;
 import dev.forge.transport.Json;
 import dev.forge.transport.StaticAssets;
-import dev.forge.workspace.WorkspaceAccessCommands;
-import dev.forge.workspace.WorkspaceAccessService;
 import dev.forge.workspace.WorkspaceCommands;
 import dev.forge.workspace.WorkspaceEvents;
 import dev.forge.workspace.WorkspaceService;
@@ -100,12 +97,12 @@ public final class ForgeApplication implements Lifecycle.Component {
 
         // ---- Features ---------------------------------------------------------------------
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider));
-        SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
-                config.sessionMaxLifetime());
-        WorkspaceAccessService access = new WorkspaceAccessService(workspaces, sessions);
-        Authorizer authorizer = new Authorizer(workspaces, access);
+        Authorizer authorizer = new Authorizer(workspaces);
         QueryRegistry queries = new QueryRegistry(authorizer);
         CommandExecutor executor = new CommandExecutor(commandRegistry, events, authorizer);
+
+        SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
+                config.sessionMaxLifetime());
         FileService files = new FileService(workspaces, events, config.maxFileBytes());
         EditorService editors = new EditorService(files, events);
         SettingsService settings = new SettingsService(stateStore, events);
@@ -128,8 +125,7 @@ public final class ForgeApplication implements Lifecycle.Component {
                 new ExtensionRegistry(commandRegistry, queries, executor, events, contributions);
 
         // ---- Feature registration ---------------------------------------------------------
-        new WorkspaceCommands(workspaces, access).register(commandRegistry, queries, contributions);
-        new WorkspaceAccessCommands(access).register(commandRegistry, queries, contributions);
+        new WorkspaceCommands(workspaces).register(commandRegistry, queries, contributions);
         new FileCommands(files).register(commandRegistry, queries, contributions);
         new EditorCommands(editors, languages).register(commandRegistry, queries, contributions);
         new AuthCommands(authentication, sessions).register(commandRegistry, queries);
@@ -166,7 +162,6 @@ public final class ForgeApplication implements Lifecycle.Component {
             workspaces.onClose(opened.workspaceId(), files.watch(opened.workspaceId()));
             extensions.activateFor(dev.forge.core.extension.ExtensionDescriptor.ON_WORKSPACE);
         });
-        events.subscribe(AuthEvents.SessionEnded.class, ended -> access.forgetSession(ended.sessionId()));
 
         new JarExtensionLoader(config.extensionsDir())
                 .discoverInto(extensions, (extension, contributes) ->

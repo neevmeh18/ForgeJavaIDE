@@ -109,28 +109,11 @@ export interface Contributions {
   views: ViewContribution[];
 }
 
-export type WorkspaceRole = 'VIEWER' | 'OWNER';
-
-export interface Invitation {
-  id: string;
-  workspaceId: string;
-  role: WorkspaceRole;
-  createdAt: string;
-  expiresAt: string;
-}
-
-export interface IssuedInvitation {
-  invitation: Invitation;
-  token: string;
-}
-
 export interface LoginResult {
   token: string;
   sessionId: string;
   user: { id: string; displayName: string; providerId: string };
   expiresAt: string;
-  workspaceId?: string;
-  role?: WorkspaceRole;
 }
 
 export interface ResolvedSetting {
