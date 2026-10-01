@@ -105,7 +105,7 @@ public final class LocalFileSystem implements FileSystem {
             for (Path child : children) {
                 if (++visited > maxDirectoryEntries || Thread.currentThread().isInterrupted())
                     throw ForgeException.unavailable("Directory listing budget exceeded");
-                if (Files.isSymbolicLink(child)) {
+                if (isGitMetadataPath(child) || Files.isSymbolicLink(child)) {
                     continue;
                 }
                 if (entries.size() >= maxDirectoryEntries) {
@@ -369,7 +369,7 @@ public final class LocalFileSystem implements FileSystem {
                     continue;
                 }
                 Path changed = directory.resolve(event.context().toString()).normalize();
-                if (!changed.startsWith(root)) {
+                if (!changed.startsWith(root) || isGitMetadataPath(changed)) {
                     continue;
                 }
                 boolean deleted = event.kind() == StandardWatchEventKinds.ENTRY_DELETE;
@@ -394,7 +394,8 @@ public final class LocalFileSystem implements FileSystem {
             AtomicInteger count = new AtomicInteger();
             walk.limit(maxTraversalEntries + 1L).peek(path -> {
                         if (Thread.currentThread().isInterrupted()) throw ForgeException.cancelled("Watcher registration cancelled");
-                    }).filter(path -> !Files.isSymbolicLink(path))
+                    }).filter(path -> !isGitMetadataPath(path))
+                    .filter(path -> !Files.isSymbolicLink(path))
                     .filter(path -> Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(this::withinRootExisting)
                     .takeWhile(path -> count.incrementAndGet() <= maxTraversalEntries)
@@ -427,7 +428,24 @@ public final class LocalFileSystem implements FileSystem {
         if (!candidate.startsWith(root)) {
             throw ForgeException.forbidden("Path escapes the workspace");
         }
+        if (isGitMetadataPath(candidate)) {
+            throw ForgeException.forbidden("Git metadata is managed by source control");
+        }
         return candidate;
+    }
+
+    private boolean isGitMetadataPath(Path candidate) {
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (!normalized.startsWith(root)) {
+            return false;
+        }
+        Path relative = root.relativize(normalized);
+        for (Path segment : relative) {
+            if (segment.toString().equalsIgnoreCase(".git")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void verifyParents(Path path) {

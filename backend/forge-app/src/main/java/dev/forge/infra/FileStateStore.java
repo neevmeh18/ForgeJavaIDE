@@ -9,8 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /** Small bounded JSON state store used by the single-node runtime. */
@@ -34,6 +36,7 @@ public final class FileStateStore implements StateStore {
             Path state = dataRoot.resolve("state");
             SafePaths.noLinks(state);
             Files.createDirectories(state);
+            restrictDirectory(state);
             this.root = state.toRealPath();
         } catch (IOException e) {
             throw ForgeException.unavailable("State directory is not writable: " + dataDir);
@@ -55,6 +58,8 @@ public final class FileStateStore implements StateStore {
             }
             rejectSymlink(file);
             try {
+                restrictDirectory(file.getParent());
+                restrictFile(file);
                 if (Files.size(file) > maxDocumentBytes) {
                     log.with("scope", scope).warn("Ignoring oversized state document");
                     return Map.of();
@@ -92,6 +97,7 @@ public final class FileStateStore implements StateStore {
             }
             try {
                 Files.createDirectories(file.getParent());
+                restrictDirectory(file.getParent());
                 rejectSymlink(file.getParent());
                 if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
                     rejectSymlink(file);
@@ -99,12 +105,14 @@ public final class FileStateStore implements StateStore {
                 Path temporary = Files.createTempFile(file.getParent(), ".state-", ".tmp");
                 try {
                     Files.write(temporary, encoded);
+                    restrictFile(temporary);
                     try {
                         Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING,
                                 StandardCopyOption.ATOMIC_MOVE);
                     } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
                         Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
                     }
+                    restrictFile(file);
                 } finally {
                     Files.deleteIfExists(temporary);
                 }
@@ -216,6 +224,25 @@ public final class FileStateStore implements StateStore {
             if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
                 break;
             }
+        }
+    }
+
+    private static void restrictDirectory(Path directory) throws IOException {
+        try {
+            Files.setPosixFilePermissions(directory, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE,
+                    PosixFilePermission.OWNER_EXECUTE));
+        } catch (UnsupportedOperationException ignored) {
+        }
+    }
+
+    private static void restrictFile(Path file) throws IOException {
+        try {
+            Files.setPosixFilePermissions(file, Set.of(
+                    PosixFilePermission.OWNER_READ,
+                    PosixFilePermission.OWNER_WRITE));
+        } catch (UnsupportedOperationException ignored) {
         }
     }
 }

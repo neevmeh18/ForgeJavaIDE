@@ -147,7 +147,7 @@ export class ScmView {
     close.addEventListener('click', () => dialog.close());
     dialog.addEventListener('close', () => dialog.remove());
 
-    const urlInput = el('input', { class: 'field', type: 'text', placeholder: 'http://gitea:3000/user/private-repo.git' }) as HTMLInputElement;
+    const urlInput = el('input', { class: 'field', type: 'text', placeholder: 'https://git.example.com/user/private-repo.git' }) as HTMLInputElement;
     const nameInput = el('input', { class: 'field', type: 'text', placeholder: 'Workspace name' }) as HTMLInputElement;
     const branchInput = el('input', { class: 'field', type: 'text', placeholder: 'Optional branch; blank uses remote default' }) as HTMLInputElement;
     const usernameInput = el('input', { class: 'field', type: 'text', autocomplete: 'username', placeholder: 'Leave blank to use a saved credential' }) as HTMLInputElement;
@@ -292,7 +292,7 @@ export class ScmView {
         type: 'text',
         value: repositoryUrl,
         readonly: repositoryUrl ? true : undefined,
-        placeholder: 'http://gitea:3000/user/private-repo.git',
+        placeholder: 'https://git.example.com/user/private-repo.git',
       }) as HTMLInputElement;
       const usernameInput = el('input', {
         class: 'field',

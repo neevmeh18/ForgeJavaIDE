@@ -28,6 +28,7 @@ import dev.forge.infra.BufferWordLanguageProvider;
 import dev.forge.infra.Config;
 import dev.forge.infra.FileStateStore;
 import dev.forge.infra.GitCredentialStore;
+import dev.forge.infra.GitRemoteStore;
 import dev.forge.infra.GitSourceControlProvider;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
@@ -128,7 +129,9 @@ public final class ForgeApplication implements Lifecycle.Component {
                 events, config.shell());
         TaskService tasks = new TaskService(List.of(new WorkspaceTaskProvider(workspaces)), terminals, events);
         GitCredentialStore credentialStore = new GitCredentialStore(stateStore);
-        GitSourceControlProvider gitProvider = new GitSourceControlProvider(workspaceProvider, credentialStore);
+        GitRemoteStore remoteStore = new GitRemoteStore(stateStore);
+        GitSourceControlProvider gitProvider = new GitSourceControlProvider(
+                workspaceProvider, credentialStore, remoteStore, config.allowInsecureGitHttp());
         SourceControlService scm =
                 new SourceControlService(List.of(gitProvider), events);
         DebugService debug = new DebugService(events);
@@ -149,7 +152,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
         new ScmCommands(scm).register(commandRegistry, queries, contributions);
 
-        registerCredentialCommands(commandRegistry, queries, credentialStore, gitProvider, workspaces, config);
+        registerCredentialCommands(commandRegistry, queries, credentialStore, remoteStore, gitProvider, workspaces, config);
 
         new DebugCommands(debug).register(commandRegistry, queries, contributions);
         new WorkbenchQueries(commandRegistry, executor, contributions, extensions, languages,
@@ -327,6 +330,7 @@ public final class ForgeApplication implements Lifecycle.Component {
             CommandRegistry commands,
             QueryRegistry queries,
             GitCredentialStore credentialStore,
+            GitRemoteStore remoteStore,
             GitSourceControlProvider gitProvider,
             WorkspaceService workspaces,
             Config config) {
@@ -360,6 +364,7 @@ public final class ForgeApplication implements Lifecycle.Component {
                         deleteFailedClone(targetDir);
                         throw e;
                     }
+                    remoteStore.bind(ws.id(), url);
                     if (saveCredential && oneShot != null) {
                         credentialStore.store(url, oneShot.username(), oneShot.password());
                     }

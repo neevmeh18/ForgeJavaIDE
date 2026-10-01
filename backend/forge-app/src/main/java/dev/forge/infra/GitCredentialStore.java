@@ -19,6 +19,9 @@ public final class GitCredentialStore {
 
     private static final Log log = Log.of(GitCredentialStore.class);
     private static final String STORE_OWNER = "git-credentials";
+    private static final int MAX_URL_CHARS = 4096;
+    private static final int MAX_USERNAME_CHARS = 512;
+    private static final int MAX_SECRET_CHARS = 16 * 1024;
     private static final String ALGORITHM = "AES";
     private static final String CIPHER = "AES/ECB/PKCS5Padding";
 
@@ -32,12 +35,7 @@ public final class GitCredentialStore {
 
     public void store(String repositoryUrl, String username, String password) {
         String normalized = normalize(repositoryUrl);
-        if (username == null || username.isBlank()) {
-            throw ForgeException.invalidArgument("Git username is required");
-        }
-        if (password == null || password.isEmpty()) {
-            throw ForgeException.invalidArgument("Git password or token is required");
-        }
+        validateCredentialText(username, password);
 
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put("repositoryUrl", normalized);
@@ -107,18 +105,16 @@ public final class GitCredentialStore {
 
     public record Credential(String username, String password) {
         public Credential {
-            if (username == null || username.isBlank()) {
-                throw ForgeException.invalidArgument("Git username is required");
-            }
-            if (password == null || password.isEmpty()) {
-                throw ForgeException.invalidArgument("Git password or token is required");
-            }
+            validateCredentialText(username, password);
         }
     }
 
     static String normalize(String repositoryUrl) {
         if (repositoryUrl == null || repositoryUrl.isBlank()) {
             throw ForgeException.invalidArgument("Repository URL is required");
+        }
+        if (repositoryUrl.length() > MAX_URL_CHARS || hasControlCharacter(repositoryUrl)) {
+            throw ForgeException.invalidArgument("Invalid repository URL");
         }
         try {
             URI parsed = new URI(repositoryUrl.trim());
@@ -153,6 +149,30 @@ public final class GitCredentialStore {
         } catch (URISyntaxException e) {
             throw ForgeException.invalidArgument("Invalid repository URL");
         }
+    }
+
+    private static void validateCredentialText(String username, String password) {
+        if (username == null || username.isBlank()) {
+            throw ForgeException.invalidArgument("Git username is required");
+        }
+        if (username.length() > MAX_USERNAME_CHARS || hasControlCharacter(username)) {
+            throw ForgeException.invalidArgument("Invalid Git username");
+        }
+        if (password == null || password.isEmpty()) {
+            throw ForgeException.invalidArgument("Git password or token is required");
+        }
+        if (password.length() > MAX_SECRET_CHARS || hasControlCharacter(password)) {
+            throw ForgeException.invalidArgument("Invalid Git password or token");
+        }
+    }
+
+    private static boolean hasControlCharacter(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (Character.isISOControl(value.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private byte[] encrypt(String plaintext) {
