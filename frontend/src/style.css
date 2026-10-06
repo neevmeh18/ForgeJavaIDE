@@ -134,6 +134,18 @@ button:focus-visible {
   font-size: 12px;
 }
 
+.login-toggle {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.login-toggle-row {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+}
+
 /* ---- layout ------------------------------------------------------------------------ */
 
 #workbench,

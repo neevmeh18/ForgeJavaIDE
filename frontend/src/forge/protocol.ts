@@ -118,6 +118,13 @@ export interface LoginResult {
   expiresAt: string;
 }
 
+export interface RegisterResult {
+  token: string;
+  sessionId: string;
+  user: { id: string; displayName: string; providerId: string };
+  expiresAt: string;
+}
+
 export interface ResolvedSetting {
   key: string;
   value: unknown;
