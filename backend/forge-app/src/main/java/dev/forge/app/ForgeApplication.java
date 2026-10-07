@@ -128,7 +128,8 @@ public final class ForgeApplication implements Lifecycle.Component {
         DebugService debug = new DebugService(events);
 
         ExtensionRegistry extensions =
-                new ExtensionRegistry(commandRegistry, queries, executor, events, contributions);
+                new ExtensionRegistry(commandRegistry, queries, executor, events, contributions,
+                        stateStore, settings);
 
         // ---- Feature registration ---------------------------------------------------------
         new WorkspaceCommands(workspaces).register(commandRegistry, queries, contributions);
