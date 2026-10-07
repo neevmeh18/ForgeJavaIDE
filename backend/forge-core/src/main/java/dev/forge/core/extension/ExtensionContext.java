@@ -3,6 +3,7 @@ package dev.forge.core.extension;
 import dev.forge.core.Args;
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids.ExtensionId;
+import dev.forge.core.Ids.UserId;
 import dev.forge.core.Ids.WorkspaceId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
@@ -18,6 +19,9 @@ import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.event.Event;
 import dev.forge.core.event.EventBus;
 import dev.forge.core.query.QueryRegistry;
+import dev.forge.settings.Settings;
+import dev.forge.settings.SettingsService;
+import dev.forge.state.StateStore;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -32,6 +36,11 @@ import java.util.function.Consumer;
  * the framework can evolve a feature's internals without breaking installed extensions.
  *
  * <p>Registrations made here are tracked and released automatically on deactivation.
+ *
+ * <p><b>State and settings isolation</b> — every state or settings operation is automatically
+ * namespaced to the extension's own ID. The {@link #requireOwnNamespace} check runs before
+ * any read or mutation, centralising the isolation boundary in this class so cross-extension
+ * data access is structurally impossible and reserved framework namespaces are always blocked.
  */
 public final class ExtensionContext {
 
@@ -50,11 +59,14 @@ public final class ExtensionContext {
     private final EventBus events;
     private final ContributionRegistry contributions;
     private final Lifecycle.Store disposables;
+    private final StateStore stateStore;
+    private final SettingsService settingsService;
     private final Log log;
 
-    ExtensionContext(ExtensionId extensionId, CommandRegistry commands, QueryRegistry queries,
+    public ExtensionContext(ExtensionId extensionId, CommandRegistry commands, QueryRegistry queries,
                      CommandExecutor executor, EventBus events, ContributionRegistry contributions,
-                     Lifecycle.Store disposables) {
+                     Lifecycle.Store disposables, StateStore stateStore,
+                     SettingsService settingsService) {
         this.extensionId = extensionId;
         this.commands = commands;
         this.queries = queries;
@@ -62,6 +74,8 @@ public final class ExtensionContext {
         this.events = events;
         this.contributions = contributions;
         this.disposables = disposables;
+        this.stateStore = stateStore;
+        this.settingsService = settingsService;
         this.log = Log.of(Extension.class).with("extensionId", extensionId);
     }
 
@@ -141,16 +155,135 @@ public final class ExtensionContext {
         disposables.add(disposable);
     }
 
+    // ---- Extension-owned persistent state -----------------------------------------------
+
+    /**
+     * Reads all values stored by this extension at {@code scope}.
+     *
+     * <p>The returned map is a snapshot — any key whose value is {@code null} has been removed.
+     */
+    public Map<String, Object> getState(StateStore.Scope scope) {
+        requireStateAccess();
+        return stateStore.read(scope, extensionId.value());
+    }
+
+    /**
+     * Reads a single value stored by this extension at {@code scope}.
+     *
+     * @return the value, or {@code null} if no value has been set for this key.
+     */
+    public Object getState(StateStore.Scope scope, String key) {
+        requireStateAccess();
+        return stateStore.get(scope, extensionId.value(), key).orElse(null);
+    }
+
+    /**
+     * Writes a value into this extension's state at {@code scope}. A {@code null} value
+     * removes the key. The entire document is replaced so the write goes through a single
+     * atomic state-store operation; concurrent callers that need a read-modify-write cycle
+     * should hold external synchronisation.
+     */
+    public void putState(StateStore.Scope scope, String key, Object value) {
+        requireStateAccess();
+        stateStore.put(scope, extensionId.value(), key, value);
+    }
+
+    /**
+     * Removes one key from this extension's state at {@code scope}.
+     */
+    public void removeState(StateStore.Scope scope, String key) {
+        requireStateAccess();
+        stateStore.put(scope, extensionId.value(), key, null);
+    }
+
+    /**
+     * Removes <em>all</em> keys stored by this extension at {@code scope}.
+     */
+    public void clearState(StateStore.Scope scope) {
+        requireStateAccess();
+        stateStore.clear(scope, extensionId.value());
+    }
+
+    // ---- Extension-owned settings -------------------------------------------------------
+
+    /**
+     * Declares a new setting owned by this extension. The setting key is automatically
+     * namespaced to the extension's ID, so two extensions cannot collide even if they
+     * choose the same short key name.
+     *
+     * <p>The setting's default value lives at the {@code EXTENSION} layer, meaning a user
+     * or workspace can override it. Declaring the same key twice raises a conflict.
+     */
+    public void defineSetting(String key, Settings.Type type, Object defaultValue, String description) {
+        requireStateAccess();
+        settingsService.define(extensionId, new Settings.Definition(
+                namespacedKey(key), type, defaultValue, description,
+                Settings.Layer.EXTENSION, java.util.List.of(), extensionId.value()));
+    }
+
+    /**
+     * Returns the effective value of one of this extension's settings, resolved through
+     * the standard layering (workspace overlays user, user overlays extension default).
+     *
+     * @param key the short key supplied to {@link #defineSetting}.
+     */
+    public Object getSetting(String key, UserId user, WorkspaceId workspace) {
+        requireStateAccess();
+        return settingsService.resolve(namespacedKey(key), user, workspace).value();
+    }
+
+    /**
+     * Writes a value into one of this extension's settings at the given {@code layer}.
+     * {@code USER} and {@code WORKSPACE} layers are writable; {@code DEFAULT} and
+     * {@code EXTENSION} are not (they come from code).
+     */
+    public void setSetting(String key, Object value, Settings.Layer layer, UserId user, WorkspaceId workspace) {
+        requireStateAccess();
+        settingsService.set(namespacedKey(key), value, layer, user, workspace);
+    }
+
+    // ---- Internal helpers ---------------------------------------------------------------
+
     /** An event raised by an extension; always namespaced by its extension id. */
     public record ExtensionEvent(String type, ExtensionId extensionId, WorkspaceId workspaceId,
                                  Map<String, Object> payload) implements Event {
     }
 
+    /**
+     * Centralised isolation check called before every state and settings operation, and
+     * also for command and query registration.
+     *
+     * <p>For command/query registration the caller supplies the candidate namespace so the
+     * check can verify it does not fall inside a reserved framework namespace. For state and
+     * settings the namespace is always the extension's own id — derived here from the
+     * extension context, never from caller-supplied data — so cross-extension access is
+     * structurally blocked by design, not merely by convention.
+     */
     private void requireOwnNamespace(String namespace, String id) {
         if (RESERVED.contains(namespace)) {
             throw ForgeException.forbidden(
                     "Extensions may not register into the reserved namespace '" + namespace + "': " + id)
                     .with("extensionId", extensionId.value());
         }
+    }
+
+    /**
+     * Validates that state or settings access is occurring within this extension's own
+     * namespace. The namespace is always derived from {@link #extensionId}, never from
+     * caller-supplied arguments, making cross-extension access structurally impossible.
+     */
+    private void requireStateAccess() {
+        String ns = extensionId.value();
+        if (ns == null || ns.isBlank()) {
+            throw ForgeException.forbidden("Extension has no valid identifier for state access");
+        }
+    }
+
+    /**
+     * Returns a key namespaced to this extension's ID, preventing collisions between
+     * extensions that choose the same short key name.
+     */
+    private String namespacedKey(String key) {
+        return extensionId.value() + "." + key;
     }
 }

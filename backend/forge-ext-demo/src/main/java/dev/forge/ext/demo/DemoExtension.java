@@ -6,6 +6,8 @@ import dev.forge.core.extension.Extension;
 import dev.forge.core.extension.ExtensionContext;
 import dev.forge.core.query.QueryRegistry.QueryDescriptor;
 import dev.forge.filesystem.FileEvents;
+import dev.forge.settings.Settings;
+import dev.forge.state.StateStore;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +31,59 @@ public final class DemoExtension implements Extension {
     @Override
     public void activate(ExtensionContext ctx) {
         ctx.log().info("Demo extension activating");
+
+        // ---- Extension-owned state example ------------------------------------------------
+        // Store a value on activation so we can verify persistence across sessions.
+        ctx.putState(StateStore.Scope.APPLICATION, "activatedAt",
+                String.valueOf(System.currentTimeMillis()));
+        ctx.log().info("Stored activatedAt in extension state");
+
+        // Command to read all state for this extension.
+        ctx.registerCommand(
+                CommandDescriptor.of("demo.getState", "Demo", "Get Extension State")
+                        .describedAs("Returns all state stored by this extension"),
+                command -> ctx.getState(StateStore.Scope.APPLICATION));
+
+        // Command to write a state key/value.
+        ctx.registerCommand(
+                CommandDescriptor.of("demo.putState", "Demo", "Put Extension State Value")
+                        .describedAs("Stores a value in the extension's state")
+                        .withArguments(
+                                new CommandDescriptor.Argument("key", "string", "key"),
+                                new CommandDescriptor.Argument("value", "json", "value")),
+                command -> {
+                    ctx.putState(StateStore.Scope.APPLICATION,
+                            command.args().requiredString("key"),
+                            command.args().raw("value"));
+                    return Map.of("written", command.args().requiredString("key"));
+                });
+
+        // ---- Extension-owned settings example --------------------------------------------
+        // Define a setting owned by this extension.
+        ctx.defineSetting("greeting", Settings.Type.STRING, "Hello from Demo!",
+                "A greeting message shown by the demo extension");
+        ctx.log().info("Defined demo setting 'greeting' with default value");
+
+        // Command to read the effective value of the extension's setting.
+        ctx.registerCommand(
+                CommandDescriptor.of("demo.getSetting", "Demo", "Get Extension Setting")
+                        .describedAs("Resolves one of this extension's settings"),
+                command -> ctx.getSetting("greeting", command.request().userId(),
+                        command.request().workspaceId()));
+
+        // Command to change the setting at the user layer.
+        ctx.registerCommand(
+                CommandDescriptor.of("demo.setSetting", "Demo", "Set Extension Setting Value")
+                        .describedAs("Overrides one of this extension's settings at the user layer")
+                        .withArguments(new CommandDescriptor.Argument("value", "string", "value")),
+                command -> {
+                    ctx.setSetting("greeting", command.args().requiredString("value"),
+                            dev.forge.settings.Settings.Layer.USER,
+                            command.request().userId(), command.request().workspaceId());
+                    return Map.of("set", command.args().requiredString("value"));
+                });
+
+        // ---- Existing demo functionality below -------------------------------------------
 
         // A command in the extension's own namespace. The framework refuses anything inside a
         // reserved namespace, so this cannot shadow a built-in.
