@@ -1,7 +1,15 @@
 # Forge local development stack.
 #
-# Set a password before first start:
-#   IDE_AUTH_PASSWORD='choose-a-strong-password' docker compose up --build
+# Single-user mode (default):
+#   IDE_AUTH_PASSWORD='set-a-strong-password-at-least-12-chars' docker compose up --build
+#
+# Multiuser mode:
+#   IDE_AUTH_USERS='alice:longPassword1,bob:differentPass2' docker compose up --build
+#
+# Both modes support the same isolation — each user gets their own session and their own
+# workspace access, and events never cross users. The single-user env vars IDE_AUTH_USER and
+# IDE_AUTH_PASSWORD are still supported for backward compatibility; when IDE_AUTH_USERS is set,
+# it takes precedence.
 
 services:
   forge:
@@ -17,7 +25,8 @@ services:
     environment:
       IDE_HOST: "0.0.0.0"
       IDE_AUTH_USER: "${IDE_AUTH_USER:-developer}"
-      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:?Set IDE_AUTH_PASSWORD before starting Forge}"
+      IDE_AUTH_PASSWORD: "${IDE_AUTH_PASSWORD:-}"
+      IDE_AUTH_USERS: "${IDE_AUTH_USERS:-}"
       IDE_LOG_LEVEL: "${IDE_LOG_LEVEL:-INFO}"
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
       IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"

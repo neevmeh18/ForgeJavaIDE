@@ -1,3 +1,18 @@
+# Multiuser login, 2026-10-07
+
+- Replaced single-user PasswordAuthenticationProvider with MultiUserPasswordAuthenticationProvider
+  supporting multiple concurrent users via the new `IDE_AUTH_USERS` environment variable
+  (format: `user1:pass1,user2:pass2`). Backward compatible — `IDE_AUTH_USER`/`IDE_AUTH_PASSWORD`
+  continue to work for single-user deployments.
+- Each user gets PBKDF2-HMAC-SHA-256 hashed credentials with a unique random salt. Password
+  verification is always constant-time, never distinguishing an unknown username from a wrong
+  password. Rate limiting is shared across all users (2 concurrent derivations, 30 attempts per
+  60-second window).
+- Workspace isolation, session scoping and event filtering were already multiuser-safe — no
+  changes needed to Authorizer, SessionService or EventStream.
+- Frontend login form already accepts any username/password generically — no frontend changes
+  were needed.
+
 # Repair pass, 2026-09-16
 
 This is a repair candidate, not a release verified end to end. See VERIFICATION.md before deployment.

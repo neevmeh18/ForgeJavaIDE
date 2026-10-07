@@ -4,6 +4,8 @@ import dev.forge.core.ForgeException;
 import dev.forge.core.Log;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Deployment configuration, read once from the environment. */
 public record Config(
@@ -16,6 +18,7 @@ public record Config(
         String logLevel,
         String authUsername,
         String authPassword,
+        Map<String, String> authUsers,
         String shell,
         boolean terminalsEnabled,
         Duration sessionIdleTimeout,
@@ -43,6 +46,8 @@ public record Config(
     public static Config fromEnvironment() {
         String host = env("IDE_HOST", "127.0.0.1");
         String password = env("IDE_AUTH_PASSWORD", "");
+        String usersRaw = env("IDE_AUTH_USERS", "");
+        Map<String, String> users = parseUsers(usersRaw, env("IDE_AUTH_USER", "developer"), password);
         return new Config(
                 host,
                 boundedIntEnv("IDE_PORT", 3000, 1, 65535),
@@ -53,6 +58,7 @@ public record Config(
                 env("IDE_LOG_LEVEL", "INFO"),
                 env("IDE_AUTH_USER", "developer"),
                 password,
+                users,
                 env("IDE_SHELL", "/bin/sh"),
                 !"false".equalsIgnoreCase(env("IDE_TERMINAL_ENABLED", "true")),
                 Duration.ofMinutes(boundedIntEnv("IDE_SESSION_IDLE_MINUTES", 120, 5, 1440)),
@@ -73,10 +79,67 @@ public record Config(
                 boundedIntEnv("IDE_MAX_TRAVERSAL_ENTRIES", 100000, 1000, 1000000));
     }
 
+    /**
+     * Parses the {@code IDE_AUTH_USERS} variable. Format: {@code user:pass,user:pass}. If the raw
+     * string is blank, falls back to the single-user {@code username} and {@code password} pair.
+     * Each password is validated against minimum length and the development default.
+     */
+    static Map<String, String> parseUsers(String raw, String fallbackUser, String fallbackPass) {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (raw == null || raw.isBlank()) {
+            if (fallbackPass != null && !fallbackPass.isEmpty()) {
+                validatePassword(fallbackPass);
+                map.put(fallbackUser, fallbackPass);
+            }
+            return map;
+        }
+        for (String pair : raw.split(",", 100)) {
+            pair = pair.trim();
+            if (pair.isEmpty()) continue;
+            int colon = pair.indexOf(':');
+            if (colon <= 0 || colon >= pair.length() - 1) {
+                throw ForgeException.invalidArgument(
+                        "Invalid entry in IDE_AUTH_USERS: '" + pair + "'. Expected 'username:password'.");
+            }
+            String username = pair.substring(0, colon).trim();
+            String password = pair.substring(colon + 1).trim();
+            if (username.isEmpty()) {
+                throw ForgeException.invalidArgument("Empty username in IDE_AUTH_USERS entry: '" + pair + "'");
+            }
+            if (password.isEmpty()) {
+                throw ForgeException.invalidArgument("Empty password for user '" + username + "' in IDE_AUTH_USERS");
+            }
+            validatePassword(password);
+            if (map.containsKey(username)) {
+                throw ForgeException.invalidArgument(
+                        "Duplicate user '" + username + "' in IDE_AUTH_USERS");
+            }
+            map.put(username, password);
+        }
+        return map;
+    }
+
+    /** Validates a single configured password. */
+    private static void validatePassword(String password) {
+        if (password.length() < 12) {
+            throw ForgeException.invalidArgument(
+                    "Set all passwords to at least 12 characters. A configured password is too short.");
+        }
+        if (DEVELOPMENT_PASSWORD.equals(password)) {
+            throw ForgeException.invalidArgument(
+                    "Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
+        }
+    }
+
     /** Refuses the dangerous combination that previously made the development credential remote. */
     public void validateSecurityDefaults() {
-        if (authPassword == null || authPassword.length() < 12 || DEVELOPMENT_PASSWORD.equals(authPassword)) {
-            throw ForgeException.invalidArgument("Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
+        if (authUsers.isEmpty() && (authPassword == null || authPassword.length() < 12
+                || DEVELOPMENT_PASSWORD.equals(authPassword))) {
+            throw ForgeException.invalidArgument(
+                    "Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
+        }
+        if (authUsers.isEmpty() && (authPassword == null || authPassword.isBlank())) {
+            throw ForgeException.invalidArgument("Set one of IDE_AUTH_USERS or IDE_AUTH_PASSWORD");
         }
     }
 
