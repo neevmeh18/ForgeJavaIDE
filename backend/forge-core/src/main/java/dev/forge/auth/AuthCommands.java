@@ -22,6 +22,10 @@ public final class AuthCommands {
     public record LoginResult(String token, SessionId sessionId, User user, Instant expiresAt) {
     }
 
+    /** What a client receives on successful registration (same shape — token, session, user). */
+    public record RegisterResult(String token, SessionId sessionId, User user, Instant expiresAt) {
+    }
+
     public record CurrentUser(User user, SessionId sessionId, Instant expiresAt) {
     }
 
@@ -59,6 +63,44 @@ public final class AuthCommands {
                         return new LoginResult(issued.token(), issued.session().id(), user, issued.expiresAt());
                     } finally {
                         credentials.wipe();
+                    }
+                });
+
+        commands.register(
+                CommandDescriptor.of("auth.register", "Authentication", "Create Account")
+                        .describedAs("Creates a new user account and returns a session token")
+                        .withArguments(
+                                new CommandDescriptor.Argument("username", "string", "login name"),
+                                new CommandDescriptor.Argument("password", "string", "password"),
+                                new CommandDescriptor.Argument("displayName", "string", "display name (optional)"))
+                        .anonymous().asSensitive(),
+                ctx -> {
+                    if (!(provider instanceof AuthenticationProvider.Registrar registrar)) {
+                        throw ForgeException.unsupported("Registration is not available on this server");
+                    }
+                    String username = ctx.args().requiredString("username");
+                    String password = ctx.args().requiredString("password");
+                    if (username.length() < 2 || username.length() > 128) {
+                        throw ForgeException.invalidArgument("Username must be between 2 and 128 characters");
+                    }
+                    if (password.length() < 6) {
+                        throw ForgeException.invalidArgument("Password must be at least 6 characters");
+                    }
+                    if (password.length() > 1024) {
+                        throw ForgeException.invalidArgument("Password exceeds the supported length");
+                    }
+                    String displayName = ctx.args().string("displayName").orElse(username);
+                    String client = ctx.args().string("client").orElse("");
+                    if (client.length() > 512) {
+                        throw ForgeException.invalidArgument("Client description is too long");
+                    }
+                    char[] secret = password.toCharArray();
+                    try {
+                        User user = registrar.register(username, secret, displayName, java.util.Map.of());
+                        SessionService.Issued issued = sessions.issue(user, client);
+                        return new RegisterResult(issued.token(), issued.session().id(), user, issued.expiresAt());
+                    } finally {
+                        java.util.Arrays.fill(secret, '\0');
                     }
                 });
 

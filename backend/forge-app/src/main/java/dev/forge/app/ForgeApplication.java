@@ -26,9 +26,11 @@ import dev.forge.filesystem.FileService;
 import dev.forge.infra.BufferWordLanguageProvider;
 import dev.forge.infra.Config;
 import dev.forge.infra.FileStateStore;
+import dev.forge.infra.FileUserStore;
 import dev.forge.infra.GitSourceControlProvider;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
+import dev.forge.infra.MultiuserAuthenticationProvider;
 import dev.forge.infra.PasswordAuthenticationProvider;
 import dev.forge.infra.ProcessTerminalProvider;
 import dev.forge.infra.WorkspaceTaskProvider;
@@ -95,8 +97,13 @@ public final class ForgeApplication implements Lifecycle.Component {
                 config.maxWorkspaceBytes(), config.maxDirectoryEntries(), config.maxTraversalEntries());
         StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
                 config.maxStateDocumentBytes());
-        AuthenticationProvider authentication =
-                new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
+        AuthenticationProvider authentication;
+        if (config.multiuserEnabled()) {
+            authentication = new MultiuserAuthenticationProvider(new FileUserStore(config.dataDir()));
+            log.info("Multiuser authentication enabled — users register via auth.register");
+        } else {
+            authentication = new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
+        }
 
         // ---- Features ---------------------------------------------------------------------
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),

@@ -16,6 +16,7 @@ public record Config(
         String logLevel,
         String authUsername,
         String authPassword,
+        boolean multiuserEnabled,
         String shell,
         boolean terminalsEnabled,
         Duration sessionIdleTimeout,
@@ -37,11 +38,17 @@ public record Config(
 
     private static final Log log = Log.of(Config.class);
 
-    /** Former default, now explicitly rejected. */
+    /** Default username in single-user mode. When not overridden, multiuser mode is enabled. */
+    public static final String DEFAULT_AUTH_USER = "developer";
+
+    /** Former default, now explicitly rejected in single-user mode. */
     public static final String DEVELOPMENT_PASSWORD = "forge";
 
     public static Config fromEnvironment() {
         String host = env("IDE_HOST", "127.0.0.1");
+        String authUserRaw = System.getenv("IDE_AUTH_USER");
+        boolean usernameExplicit = authUserRaw != null && !authUserRaw.isBlank();
+        String authUser = usernameExplicit ? authUserRaw.trim() : DEFAULT_AUTH_USER;
         String password = env("IDE_AUTH_PASSWORD", "");
         return new Config(
                 host,
@@ -51,8 +58,9 @@ public record Config(
                 Path.of(env("IDE_WEB_ROOT", "/app/web")),
                 Path.of(env("IDE_EXTENSIONS_DIR", "/app/extensions")),
                 env("IDE_LOG_LEVEL", "INFO"),
-                env("IDE_AUTH_USER", "developer"),
+                authUser,
                 password,
+                !usernameExplicit, // multiuser mode when IDE_AUTH_USER is not explicitly set
                 env("IDE_SHELL", "/bin/sh"),
                 !"false".equalsIgnoreCase(env("IDE_TERMINAL_ENABLED", "true")),
                 Duration.ofMinutes(boundedIntEnv("IDE_SESSION_IDLE_MINUTES", 120, 5, 1440)),
@@ -75,6 +83,9 @@ public record Config(
 
     /** Refuses the dangerous combination that previously made the development credential remote. */
     public void validateSecurityDefaults() {
+        if (multiuserEnabled) {
+            return;
+        }
         if (authPassword == null || authPassword.length() < 12 || DEVELOPMENT_PASSWORD.equals(authPassword)) {
             throw ForgeException.invalidArgument("Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
         }
