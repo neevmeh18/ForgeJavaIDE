@@ -4,6 +4,7 @@ import dev.forge.auth.AuthCommands;
 import dev.forge.auth.AuthEvents;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.Authorizer;
+import dev.forge.auth.MultiUserPasswordAuthenticationProvider;
 import dev.forge.auth.SessionService;
 import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Lifecycle;
@@ -29,7 +30,6 @@ import dev.forge.infra.FileStateStore;
 import dev.forge.infra.GitSourceControlProvider;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
-import dev.forge.infra.PasswordAuthenticationProvider;
 import dev.forge.infra.ProcessTerminalProvider;
 import dev.forge.infra.WorkspaceTaskProvider;
 import dev.forge.language.LanguageCommands;
@@ -96,7 +96,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
                 config.maxStateDocumentBytes());
         AuthenticationProvider authentication =
-                new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
+                new MultiUserPasswordAuthenticationProvider(config.authUsers());
 
         // ---- Features ---------------------------------------------------------------------
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),
