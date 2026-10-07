@@ -43,6 +43,10 @@ export class ForgeClient {
     this.token = token;
   }
 
+  getToken(): string | null {
+    return this.token;
+  }
+
   setWorkspace(workspaceId: string | null): void {
     this.generation++;
     this.workspaceId = workspaceId;

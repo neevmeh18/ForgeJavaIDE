@@ -114,7 +114,7 @@ export interface Contributions {
 export interface LoginResult {
   token: string;
   sessionId: string;
-  user: { id: string; displayName: string; providerId: string };
+  user: { id: string; displayName: string; providerId: string; role: string };
   expiresAt: string;
 }
 
@@ -200,4 +200,31 @@ export interface WorkbenchStatus {
   extensionCount: number;
   languages: string[];
   terminalsAvailable: boolean;
+}
+
+export interface WhoamiResult {
+  userId: string;
+  sessionId: string;
+  role: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface UserView {
+  id: string;
+  username: string;
+  role: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface RoleView {
+  name: string;
+  displayName: string;
+  permissions: string[];
+}
+
+export interface PermsResult {
+  role: string;
+  permissions: string[];
 }

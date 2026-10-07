@@ -3,6 +3,7 @@ package dev.forge.auth;
 import dev.forge.core.ForgeException;
 import dev.forge.core.Ids;
 import dev.forge.core.Ids.SessionId;
+import dev.forge.core.Ids.UserId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
 import dev.forge.core.event.EventBus;
@@ -42,6 +43,7 @@ public final class SessionService implements Lifecycle.Component {
 
     private final Map<String, Entry> byTokenHash = new ConcurrentHashMap<>();
     private final Map<SessionId, String> hashBySession = new ConcurrentHashMap<>();
+    private final Map<SessionId, String> roleBySession = new ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService sweeper =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "forge-session-sweeper");
@@ -89,11 +91,13 @@ public final class SessionService implements Lifecycle.Component {
                 throw ForgeException.unavailable("Too many active sessions");
             }
             Instant now = Instant.now();
+            String role = user.role();
             session = new Session(SessionId.of(Ids.random("sess")), user.id(), now, now,
-                    now.plus(idleTimeout), sanitize(clientInfo));
+                    now.plus(idleTimeout), sanitize(clientInfo), role);
             String hash = hash(token);
             byTokenHash.put(hash, new Entry(session));
             hashBySession.put(session.id(), hash);
+            roleBySession.put(session.id(), role);
         }
 
         log.with("userId", user.id()).with("sessionId", session.id()).info("Session issued");
@@ -155,6 +159,7 @@ public final class SessionService implements Lifecycle.Component {
 
     private void revokeLocked(SessionId id, String reason) {
         String hash = hashBySession.remove(id);
+        roleBySession.remove(id);
         if (hash == null) {
             return;
         }
@@ -183,6 +188,32 @@ public final class SessionService implements Lifecycle.Component {
 
     public int activeSessions() {
         return byTokenHash.size();
+    }
+
+    /**
+     * Returns the role associated with a session, if the session is still active.
+     */
+    public Optional<String> roleOf(SessionId id) {
+        if (id == null) return Optional.empty();
+        synchronized (lock) {
+            // Verify the session is still active
+            if (!hashBySession.containsKey(id)) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(roleBySession.get(id));
+        }
+    }
+
+    /**
+     * Returns all active sessions belonging to a user.
+     */
+    public List<Session> findByUser(UserId userId) {
+        synchronized (lock) {
+            return byTokenHash.values().stream()
+                    .map(Entry::session)
+                    .filter(s -> s.userId().equals(userId))
+                    .toList();
+        }
     }
 
     private static String hash(String token) {

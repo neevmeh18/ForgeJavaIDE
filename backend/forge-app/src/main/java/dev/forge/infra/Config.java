@@ -33,7 +33,11 @@ public record Config(
         Duration queryTimeout,
         Duration requestBodyTimeout,
         int maxDirectoryEntries,
-        int maxTraversalEntries) {
+        int maxTraversalEntries,
+        Path userStorePath,
+        int maxAccounts,
+        int auditMaxEntries,
+        int minPasswordLength) {
 
     private static final Log log = Log.of(Config.class);
 
@@ -43,6 +47,7 @@ public record Config(
     public static Config fromEnvironment() {
         String host = env("IDE_HOST", "127.0.0.1");
         String password = env("IDE_AUTH_PASSWORD", "");
+        Path dataDir = Path.of(env("IDE_DATA_DIR", "/data"));
         return new Config(
                 host,
                 boundedIntEnv("IDE_PORT", 3000, 1, 65535),
@@ -70,7 +75,11 @@ public record Config(
                 Duration.ofSeconds(boundedIntEnv("IDE_QUERY_TIMEOUT_SECONDS", 10, 1, 120)),
                 Duration.ofSeconds(boundedIntEnv("IDE_REQUEST_BODY_TIMEOUT_SECONDS", 15, 3, 120)),
                 boundedIntEnv("IDE_MAX_DIRECTORY_ENTRIES", 5000, 100, 100000),
-                boundedIntEnv("IDE_MAX_TRAVERSAL_ENTRIES", 100000, 1000, 1000000));
+                boundedIntEnv("IDE_MAX_TRAVERSAL_ENTRIES", 100000, 1000, 1000000),
+                Path.of(env("IDE_USER_STORE_PATH", "")),
+                boundedIntEnv("IDE_MAX_ACCOUNTS", 128, 1, 4096),
+                boundedIntEnv("IDE_AUDIT_MAX_ENTRIES", 1000, 100, 1000000),
+                boundedIntEnv("IDE_MIN_PASSWORD_LENGTH", 12, 8, 64));
     }
 
     /** Refuses the dangerous combination that previously made the development credential remote. */

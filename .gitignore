@@ -13,3 +13,8 @@ workspace/*
 local_analysis/
 .mcp.json
 .reforge/
+
+.agents/
+.claude/
+.codex/
+.lighthouse/

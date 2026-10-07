@@ -1,10 +1,17 @@
 package dev.forge.app;
 
+import dev.forge.auth.AuditCommands;
+import dev.forge.auth.AuditService;
 import dev.forge.auth.AuthCommands;
 import dev.forge.auth.AuthEvents;
 import dev.forge.auth.AuthenticationProvider;
 import dev.forge.auth.Authorizer;
+import dev.forge.auth.MultiuserAuthenticationProvider;
+import dev.forge.auth.PasswordHasher;
+import dev.forge.auth.RoleService;
 import dev.forge.auth.SessionService;
+import dev.forge.auth.StoredUser;
+import dev.forge.auth.UserStore;
 import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
@@ -25,8 +32,11 @@ import dev.forge.filesystem.FileCommands;
 import dev.forge.filesystem.FileService;
 import dev.forge.infra.BufferWordLanguageProvider;
 import dev.forge.infra.Config;
+import dev.forge.infra.DefaultRoleService;
 import dev.forge.infra.FileStateStore;
+import dev.forge.infra.FileUserStore;
 import dev.forge.infra.GitSourceControlProvider;
+import dev.forge.infra.InMemoryAuditService;
 import dev.forge.infra.JarExtensionLoader;
 import dev.forge.infra.LocalWorkspaceProvider;
 import dev.forge.infra.PasswordAuthenticationProvider;
@@ -56,7 +66,9 @@ import dev.forge.transport.StaticAssets;
 import dev.forge.workspace.WorkspaceCommands;
 import dev.forge.workspace.WorkspaceEvents;
 import dev.forge.workspace.WorkspaceService;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 
@@ -95,15 +107,25 @@ public final class ForgeApplication implements Lifecycle.Component {
                 config.maxWorkspaceBytes(), config.maxDirectoryEntries(), config.maxTraversalEntries());
         StateStore stateStore = new FileStateStore(config.dataDir(), config.maxStateBytes(),
                 config.maxStateDocumentBytes());
+
+        // Resolve the user store path: explicit env var or default to dataDir/users
+        Path userStoreDir = config.userStorePath().toString().isBlank()
+                ? config.dataDir().resolve("users")
+                : config.userStorePath();
+
+        FileUserStore userStore = new FileUserStore(userStoreDir, config.maxAccounts(),
+                config.minPasswordLength());
+        DefaultRoleService roleService = new DefaultRoleService();
+        InMemoryAuditService auditLog = new InMemoryAuditService(config.auditMaxEntries());
         AuthenticationProvider authentication =
-                new PasswordAuthenticationProvider(config.authUsername(), config.authPassword());
+                new MultiuserAuthenticationProvider(userStore);
 
         // ---- Features ---------------------------------------------------------------------
         WorkspaceService workspaces = new WorkspaceService(events, List.of(workspaceProvider),
                 config.maxOpenWorkspaces());
         SessionService sessions = new SessionService(events, config.sessionIdleTimeout(),
                 config.sessionMaxLifetime(), config.maxSessions());
-        Authorizer authorizer = new Authorizer(workspaces, sessions);
+        Authorizer authorizer = new Authorizer(workspaces, sessions, roleService);
         QueryRegistry queries = new QueryRegistry(authorizer);
         CommandExecutor executor = new CommandExecutor(commandRegistry, events, authorizer,
                 config.maxCommandsGlobal(), config.maxCommandsPerSession());
@@ -130,11 +152,17 @@ public final class ForgeApplication implements Lifecycle.Component {
         ExtensionRegistry extensions =
                 new ExtensionRegistry(commandRegistry, queries, executor, events, contributions);
 
+        // Seed default users on first boot
+        if (userStore.count() == 0) {
+            seedDefaultUsers(userStore);
+        }
+
         // ---- Feature registration ---------------------------------------------------------
         new WorkspaceCommands(workspaces).register(commandRegistry, queries, contributions);
         new FileCommands(files).register(commandRegistry, queries, contributions);
         new EditorCommands(editors, languages).register(commandRegistry, queries, contributions);
-        new AuthCommands(authentication, sessions).register(commandRegistry, queries);
+        new AuthCommands(authentication, sessions, userStore, roleService, auditLog).register(commandRegistry, queries);
+        new AuditCommands(auditLog).register(queries);
         new SettingsCommands(settings).register(commandRegistry, queries, contributions);
         new StateCommands(stateStore).register(commandRegistry, queries);
         new SearchCommands(search).register(commandRegistry, contributions);
@@ -182,7 +210,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         EventStream stream = new EventStream(events, json,
                 (session, event) -> isVisible(workspaces, session, event),
                 config.maxEventClientsGlobal(), config.maxEventClientsPerSession());
-        Gateway gateway = new Gateway(executor, queries, sessions, Duration.ofSeconds(30),
+        Gateway gateway = new Gateway(executor, queries, sessions, auditLog, Duration.ofSeconds(30),
                 config.queryTimeout());
         HttpTransport http = new HttpTransport(gateway, json, stream,
                 new StaticAssets(config.webRoot()), () -> ready, config.host(), config.port(),
@@ -301,6 +329,49 @@ public final class ForgeApplication implements Lifecycle.Component {
                 "Save a document shortly after editing stops"));
         settings.define(Settings.Definition.of("terminal.fontSize", Settings.Type.NUMBER, 12,
                 "Terminal font size in pixels"));
+    }
+
+    /**
+     * Seeds default user accounts on first boot.
+     *
+     * <p>Called when the user store is empty. Creates four accounts with common roles
+     * so the IDE is immediately usable in a development or demo environment. Production
+     * deployments should override these credentials through user management after startup.
+     */
+    private static void seedDefaultUsers(FileUserStore userStore) {
+        try {
+            byte[] salt = dev.forge.auth.PasswordHasher.generateSalt();
+            byte[] hash = dev.forge.auth.PasswordHasher.hash("superadmin".toCharArray(), salt);
+            userStore.create(StoredUser.of(
+                    dev.forge.core.Ids.UserId.of("superadmin"), "superadmin",
+                    Base64.getEncoder().encodeToString(hash),
+                    Base64.getEncoder().encodeToString(salt), "superadmin"));
+
+            salt = dev.forge.auth.PasswordHasher.generateSalt();
+            hash = dev.forge.auth.PasswordHasher.hash("admin".toCharArray(), salt);
+            userStore.create(StoredUser.of(
+                    dev.forge.core.Ids.UserId.of("admin"), "admin",
+                    Base64.getEncoder().encodeToString(hash),
+                    Base64.getEncoder().encodeToString(salt), "admin"));
+
+            salt = dev.forge.auth.PasswordHasher.generateSalt();
+            hash = dev.forge.auth.PasswordHasher.hash("developer".toCharArray(), salt);
+            userStore.create(StoredUser.of(
+                    dev.forge.core.Ids.UserId.of("developer"), "developer",
+                    Base64.getEncoder().encodeToString(hash),
+                    Base64.getEncoder().encodeToString(salt), "developer"));
+
+            salt = dev.forge.auth.PasswordHasher.generateSalt();
+            hash = dev.forge.auth.PasswordHasher.hash("guest".toCharArray(), salt);
+            userStore.create(StoredUser.of(
+                    dev.forge.core.Ids.UserId.of("guest"), "guest",
+                    Base64.getEncoder().encodeToString(hash),
+                    Base64.getEncoder().encodeToString(salt), "guest"));
+
+            log.info("Seeded 4 default user accounts");
+        } catch (Exception e) {
+            log.warn("Could not seed default users; continuing with empty store", e);
+        }
     }
 
     private static void defineViews(ContributionRegistry contributions) {

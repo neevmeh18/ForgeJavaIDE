@@ -2,7 +2,7 @@ import { ForgeClient } from '../forge/client';
 import { CommandRouter } from '../forge/commands';
 import type { NotificationKind, WorkbenchContext, WorkbenchState } from '../forge/context';
 import { Keybindings } from '../forge/keybindings';
-import type { Contributions, ResolvedSetting, ServerEvent, WorkbenchStatus, Workspace } from '../forge/protocol';
+import type { Contributions, PermsResult, ResolvedSetting, RoleView, ServerEvent, UserView, WhoamiResult, WorkbenchStatus, Workspace } from '../forge/protocol';
 import { ActivityBar } from './activityBar';
 import { CommandPalette } from './commandPalette';
 import { clear, el } from './dom';
@@ -110,9 +110,10 @@ export class Workbench implements WorkbenchContext {
   // ---- startup ------------------------------------------------------------------------
 
   /** Loads everything the workbench renders itself from, then opens a workspace. */
-  async start(user: string): Promise<void> {
+  async start(user: string, role: string): Promise<void> {
     this.state.user = user;
     this.statusBar.setUser(user);
+    this.statusBar.setRole(role);
     this.client.connectEvents();
 
     try {
@@ -323,6 +324,55 @@ export class Workbench implements WorkbenchContext {
       await this.client.command('auth.logout');
       this.client.setToken(null);
       window.location.reload();
+    });
+    local.registerInteractive('whoami', async () => {
+      try {
+        const result = await this.client.query<WhoamiResult>('whoami');
+        this.notify('info', `User: ${result.userId}, Role: ${result.role}`);
+      } catch (error) {
+        this.notify('error', `Could not get identity: ${describe(error)}`);
+      }
+    });
+    local.registerInteractive('passwd', async () => {
+      const oldPassword = window.prompt('Current password');
+      if (!oldPassword) return;
+      const newPassword = window.prompt('New password (min 12 characters)');
+      if (!newPassword || newPassword.length < 12) {
+        this.notify('error', 'Password must be at least 12 characters');
+        return;
+      }
+      try {
+        await this.client.command('auth.passwd', { oldPassword, newPassword });
+        this.notify('info', 'Password changed successfully');
+      } catch (error) {
+        this.notify('error', `Could not change password: ${describe(error)}`);
+      }
+    });
+    local.registerInteractive('auth.users', async () => {
+      try {
+        const users = await this.client.query<UserView[]>('auth.users');
+        const text = users.map(u => `${u.username} (${u.role})`).join(', ');
+        this.notify('info', `Users: ${text}`);
+      } catch (error) {
+        this.notify('error', `Could not list users: ${describe(error)}`);
+      }
+    });
+    local.registerInteractive('auth.roles', async () => {
+      try {
+        const roles = await this.client.query<RoleView[]>('auth.roles');
+        const text = roles.map(r => `${r.name}: [${r.permissions.join(', ')}]`).join('; ');
+        this.notify('info', `Roles: ${text}`);
+      } catch (error) {
+        this.notify('error', `Could not list roles: ${describe(error)}`);
+      }
+    });
+    local.registerInteractive('auth.perms', async () => {
+      try {
+        const result = await this.client.query<PermsResult>('auth.perms');
+        this.notify('info', `Role: ${result.role}, Permissions: [${result.permissions.join(', ')}]`);
+      } catch (error) {
+        this.notify('error', `Could not query permissions: ${describe(error)}`);
+      }
     });
     for (const id of ['file.save', 'editor.save']) local.registerInteractive(id, () => this.editors.saveActive());
     local.registerInteractive('editor.close', () => this.editors.closeActive());

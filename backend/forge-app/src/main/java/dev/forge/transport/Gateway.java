@@ -1,5 +1,7 @@
 package dev.forge.transport;
 
+import dev.forge.auth.AuditEntry;
+import dev.forge.auth.AuditService;
 import dev.forge.auth.Session;
 import dev.forge.auth.SessionService;
 import dev.forge.core.Args;
@@ -96,6 +98,7 @@ public final class Gateway implements Lifecycle.Component {
     private final CommandExecutor commands;
     private final QueryRegistry queries;
     private final SessionService sessions;
+    private final AuditService auditService;
     private final Duration synchronousTimeout;
     private final Duration queryTimeout;
     private final java.util.concurrent.Semaphore querySlots = new java.util.concurrent.Semaphore(32);
@@ -103,9 +106,16 @@ public final class Gateway implements Lifecycle.Component {
 
     public Gateway(CommandExecutor commands, QueryRegistry queries, SessionService sessions,
                    Duration synchronousTimeout, Duration queryTimeout) {
+        this(commands, queries, sessions, null, synchronousTimeout, queryTimeout);
+    }
+
+    public Gateway(CommandExecutor commands, QueryRegistry queries, SessionService sessions,
+                   AuditService auditService,
+                   Duration synchronousTimeout, Duration queryTimeout) {
         this.commands = commands;
         this.queries = queries;
         this.sessions = sessions;
+        this.auditService = auditService;
         this.synchronousTimeout = synchronousTimeout;
         this.queryTimeout = queryTimeout;
     }
@@ -143,16 +153,20 @@ public final class Gateway implements Lifecycle.Component {
         try {
             execution = commands.execute(CommandId.of(id), args, ctx);
         } catch (RuntimeException e) {
-            return Result.failure(ForgeException.normalize(e), null);
+            ForgeException failure = ForgeException.normalize(e);
+            audit(id, ctx, AuditEntry.Outcome.FAILURE, failure.code().name());
+            return Result.failure(failure, null);
         }
         if (!"auth.login".equals(id)) execution.result().whenComplete((value, failure) ->
                 retain(execution.id(), ctx.sessionId(), failure == null ? Result.value(value, execution.id())
                         : Result.failure(ForgeException.normalize(failure), execution.id())));
         if (async) {
+            audit(id, ctx, AuditEntry.Outcome.SUCCESS, "async");
             return Result.pending(execution.id());
         }
         try {
             Object value = execution.result().get(synchronousTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            audit(id, ctx, AuditEntry.Outcome.SUCCESS, "");
             return Result.value(value, execution.id());
         } catch (TimeoutException e) {
             if ("auth.login".equals(id)) { execution.cancel(); return Result.failure(ForgeException.unavailable("Login timed out"), execution.id()); }
@@ -162,10 +176,27 @@ public final class Gateway implements Lifecycle.Component {
             return Result.pending(execution.id());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            audit(id, ctx, AuditEntry.Outcome.FAILURE, "interrupted");
             return Result.failure(ForgeException.cancelled("Request interrupted"), execution.id());
         } catch (java.util.concurrent.ExecutionException e) {
-            return Result.failure(ForgeException.normalize(e), execution.id());
+            ForgeException failure = ForgeException.normalize(e);
+            audit(id, ctx, AuditEntry.Outcome.FAILURE, failure.code().name());
+            return Result.failure(failure, execution.id());
         }
+    }
+
+    private void audit(String action, RequestContext ctx, AuditEntry.Outcome outcome, String detail) {
+        if (auditService == null) {
+            return;
+        }
+        auditService.record(new AuditEntry(
+                java.time.Instant.now(),
+                ctx.userId(),
+                ctx.sessionId(),
+                action,
+                "",
+                outcome,
+                detail));
     }
 
     public Result query(String id, Args args, RequestContext ctx) {
