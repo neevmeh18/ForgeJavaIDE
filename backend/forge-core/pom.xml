@@ -12,6 +12,13 @@
 
   <artifactId>forge-core</artifactId>
   <name>Forge Core</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.jsoup</groupId>
+      <artifactId>jsoup</artifactId>
+    </dependency>
+  </dependencies>
   <description>
     Framework core and feature APIs. Depends on nothing but the JDK: no transport,
     no serialization library, no UI, no infrastructure. Everything here is the part

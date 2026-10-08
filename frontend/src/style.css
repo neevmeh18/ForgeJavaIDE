@@ -832,6 +832,42 @@ button:focus-visible {
   flex: 1;
 }
 
+/* ---- HTML preview ----------------------------------------------------------------- */
+
+.html-preview-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: white;
+}
+
+:root[data-theme='dark'] .html-preview-view {
+  background: #1e1e1e;
+}
+
+.html-preview-placeholder {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  background: var(--bg);
+}
+
+.html-preview-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: white;
+}
+
+:root[data-theme='dark'] .html-preview-iframe {
+  background: #1e1e1e;
+}
+
 .notifications {
   position: fixed;
   right: 16px;
