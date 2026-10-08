@@ -15,6 +15,7 @@ export class StatusBar {
   private readonly branchSlot = el('button', { class: 'status-item', title: 'Source control' });
   private readonly problemsSlot = el('button', { class: 'status-item', title: 'Problems' });
   private readonly positionSlot = el('span', { class: 'status-item status-right' });
+  private readonly roleSlot = el('span', { class: 'status-item status-right status-role' });
   private readonly userSlot = el('span', { class: 'status-item status-right' });
 
   constructor(private readonly ctx: WorkbenchContext) {
@@ -27,6 +28,7 @@ export class StatusBar {
       this.problemsSlot,
       el('span', { class: 'status-spacer' }),
       this.positionSlot,
+      this.roleSlot,
       this.userSlot,
     );
 
@@ -41,6 +43,10 @@ export class StatusBar {
 
   setUser(user: string | null): void {
     this.userSlot.textContent = user ?? '';
+  }
+
+  setRole(role: string | null): void {
+    this.roleSlot.textContent = role ? role.toUpperCase() : '';
   }
 
   setPosition(line: number, column: number): void {

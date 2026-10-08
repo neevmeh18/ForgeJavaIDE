@@ -20,6 +20,13 @@ public record User(UserId id, String displayName, String providerId, Map<String,
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
     }
 
+    /**
+     * Returns the role of this user, defaulting to {@code "developer"}.
+     */
+    public String role() {
+        return attributes.getOrDefault("role", "developer");
+    }
+
     public static User of(String id, String displayName, String providerId) {
         return new User(UserId.of(id), displayName, providerId, Map.of());
     }
