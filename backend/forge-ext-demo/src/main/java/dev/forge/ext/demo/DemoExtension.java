@@ -6,6 +6,7 @@ import dev.forge.core.extension.Extension;
 import dev.forge.core.extension.ExtensionContext;
 import dev.forge.core.query.QueryRegistry.QueryDescriptor;
 import dev.forge.filesystem.FileEvents;
+import dev.forge.settings.Settings;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +30,20 @@ public final class DemoExtension implements Extension {
     @Override
     public void activate(ExtensionContext ctx) {
         ctx.log().info("Demo extension activating");
+
+        // Durable per-extension state: this survives restarts, is namespaced to this
+        // extension alone, and needs no user or workspace context to read back.
+        long launchCount = ctx.getState("launchCount") instanceof Number n ? n.longValue() + 1 : 1;
+        ctx.setState("launchCount", launchCount);
+        ctx.log().with("launchCount", launchCount).info("Demo extension has been activated before");
+
+        // A typed, user-overridable setting contributed by this extension. Deactivation
+        // removes the declaration automatically.
+        if (ctx.getSetting("demo.showSaves") == null) {
+            ctx.defineSetting(Settings.Definition.of(
+                    "demo.showSaves", Settings.Type.BOOLEAN, true, "Report file saves to the log"));
+            ctx.log().info("Defined demo.showSaves setting");
+        }
 
         // A command in the extension's own namespace. The framework refuses anything inside a
         // reserved namespace, so this cannot shadow a built-in.

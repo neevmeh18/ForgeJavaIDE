@@ -85,10 +85,49 @@ public final class RoboticsExtension implements Extension {
 | `subscribe`, `subscribeAll`, `publish` | react to and raise events |
 | `intercept` | decorate an existing command without taking it over |
 | `contributeMenuItem`, `contributeKeybinding`, `contributeView` | appear in the workbench |
+| `setState`, `getState`, `deleteState`, `getAllState`, `clearState` | durable per-extension state |
+| `defineSetting`, `getSetting` | typed, user-overridable settings |
 | `log`, `onDispose`, `id` | plumbing |
 
-For persistence, use the `state.set` command and `state.get` query rather than a store handle —
-the same rule applied consistently.
+For framework state documents (user, workspace, session), still use the `state.set` command and
+`state.get` query rather than a store handle — the same rule applied consistently.
+
+---
+
+## 2a. Extension-owned state and settings
+
+Every extension gets a private, durable document it can read and write through `ExtensionContext`.
+Two extensions can use the same key without colliding — each key is namespaced by the
+extension's own id, and an extension has no way to name another extension's document.
+
+```java
+ctx.setState("wizardStep", 3);                         // persist anything JSON-shaped
+int step = (int) ctx.getState("wizardStep");           // read it back
+ctx.getAllState();                                     // the whole document
+ctx.deleteState("wizardStep");                         // remove one key
+ctx.clearState();                                      // wipe it all
+```
+
+Values are JSON-shaped (string, number, boolean, list, map, null) and persist in the same
+bounded store as user and workspace settings.
+
+Settings are declared, typed values that users can override through `settings.*` commands:
+
+```java
+ctx.defineSetting(Settings.Definition.of(
+    "robotics.highContrast", Settings.Type.BOOLEAN, false,
+    "Use high-contrast markers for RViz diagnostics"));
+Object effective = ctx.getSetting("robotics.highContrast");
+```
+
+`defineSetting` marks the extension as the source, so the settings UI groups it and deactivation
+removes it. `getSetting` returns the shipped default; for the value as the current user and
+workspace see it, run the `settings.resolved` query.
+
+State keys and setting keys follow the same reserved-namespace rule as command ids: a key whose
+first segment is a framework namespace (`file.…`, `settings.…`, `state.…`, …) is refused with
+`FORBIDDEN`, so no extension can plant data under a built-in name. Nested segments are your own
+— `robotics.settings.theme` is fine; `settings.theme` is not.
 
 ---
 

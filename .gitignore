@@ -11,3 +11,8 @@ workspace/*
 !workspace/.gitkeep
 
 local_analysis/
+.mcp.json
+.agents/
+.claude/
+.codex/
+.lighthouse/

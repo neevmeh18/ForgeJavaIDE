@@ -9,6 +9,8 @@ import dev.forge.core.command.CommandRegistry;
 import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.event.EventBus;
 import dev.forge.core.query.QueryRegistry;
+import dev.forge.settings.SettingsService;
+import dev.forge.state.StateStore;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -68,14 +70,19 @@ public final class ExtensionRegistry implements Lifecycle.Component {
     private final CommandExecutor executor;
     private final EventBus events;
     private final ContributionRegistry contributions;
+    private final StateStore stateStore;
+    private final SettingsService settingsService;
 
     public ExtensionRegistry(CommandRegistry commands, QueryRegistry queries, CommandExecutor executor,
-                             EventBus events, ContributionRegistry contributions) {
+                             EventBus events, ContributionRegistry contributions,
+                             StateStore stateStore, SettingsService settingsService) {
         this.commands = commands;
         this.queries = queries;
         this.executor = executor;
         this.events = events;
         this.contributions = contributions;
+        this.stateStore = stateStore;
+        this.settingsService = settingsService;
     }
 
     @Override
@@ -128,7 +135,8 @@ public final class ExtensionRegistry implements Lifecycle.Component {
                 entry.instance = entry.loader.load(entry.descriptor);
                 entry.state = State.LOADED;
                 entry.instance.activate(new ExtensionContext(
-                        id, commands, queries, executor, events, contributions, entry.disposables));
+                        id, commands, queries, executor, events, contributions,
+                        stateStore, settingsService, entry.disposables));
                 entry.state = State.ACTIVATED;
                 entry.failure = null;
                 scoped.info("Extension activated");
