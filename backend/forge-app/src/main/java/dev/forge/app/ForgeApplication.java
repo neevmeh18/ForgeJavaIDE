@@ -143,6 +143,7 @@ public final class ForgeApplication implements Lifecycle.Component {
         new LanguageCommands(languages, editors).register(commandRegistry, queries, contributions);
         new ScmCommands(scm).register(commandRegistry, queries, contributions);
         new DebugCommands(debug).register(commandRegistry, queries, contributions);
+        HtmlPreviewCommands.register(commandRegistry);
         new WorkbenchQueries(commandRegistry, executor, contributions, extensions, languages,
                 config.terminalsEnabled()).register(queries, commandRegistry);
 
@@ -311,5 +312,6 @@ public final class ForgeApplication implements Lifecycle.Component {
         contributions.addView(ContributionRegistry.View.of("terminal", "Terminal", "panel", "terminal", 10));
         contributions.addView(ContributionRegistry.View.of("problems", "Problems", "panel", "warning", 20));
         contributions.addView(ContributionRegistry.View.of("tasks", "Tasks", "panel", "checklist", 30));
+        contributions.addView(ContributionRegistry.View.of("htmlpreview", "HTML Preview", "panel", "eye", 35));
     }
 }

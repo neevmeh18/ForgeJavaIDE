@@ -3,6 +3,7 @@ import type { TaskInfo, ViewContribution } from '../forge/protocol';
 import { clear, el } from './dom';
 import { describeError as describe } from '../forge/client';
 import { TerminalView } from './terminalView';
+import { HtmlPreviewView } from './htmlPreview';
 
 /**
  * The bottom panel: terminal, problems and tasks.
@@ -17,6 +18,7 @@ export class Panel {
   readonly element = el('section', { class: 'panel', hidden: 'true' });
 
   readonly terminal: TerminalView;
+  readonly htmlPreview: HtmlPreviewView;
   private readonly tabs = el('div', { class: 'panel-tabs', role: 'tablist' });
   private readonly body = el('div', { class: 'panel-body' });
   private readonly problems = el('div', { class: 'view problems-view' });
@@ -27,6 +29,7 @@ export class Panel {
 
   constructor(private readonly ctx: WorkbenchContext) {
     this.terminal = new TerminalView(ctx);
+    this.htmlPreview = new HtmlPreviewView(ctx);
     const close = el('button', { class: 'view-action', title: 'Close panel', text: '✕' });
     close.addEventListener('click', () => void ctx.commands.execute('workbench.togglePanel'));
     this.element.append(el('div', { class: 'panel-header' }, this.tabs, close), this.body);
@@ -73,6 +76,9 @@ export class Panel {
     } else if (viewId === 'problems') {
       this.body.append(this.problems);
       this.renderProblems();
+    } else if (viewId === 'htmlpreview') {
+      this.body.append(this.htmlPreview.element);
+      void this.htmlPreview.refresh();
     }
     if (!this.body.childElementCount) this.body.append(el('p', { class: 'view-empty', text: 'This view has no supported renderer.' }));
     this.renderTabs();

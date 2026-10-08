@@ -417,6 +417,11 @@ export class Workbench implements WorkbenchContext {
       if (type) await this.client.command('debug.start', { type });
     });
     local.registerLocal('workbench.showLogs', 'Show Problems', 'View', () => this.panel.show('problems'));
+    local.registerLocal('workbench.showHtmlPreview', 'Show HTML Preview', 'View', () => {
+      this.panel.show('htmlpreview');
+      this.panel.htmlPreview.showFor(this.editors.activePath());
+      this.editors.layout();
+    });
     // Contributed menus may address a view directly; the settings menu item does.
     local.registerLocal('workbench.view.settings', 'Open Settings', 'View', () =>
       this.showSidebarView('settings'),
@@ -457,6 +462,7 @@ export class Workbench implements WorkbenchContext {
     this.keybindings.bind('f2', 'workbench.renameSymbol', 'editorFocus');
     this.keybindings.bind('f5', 'workbench.startDebug');
     this.keybindings.bind('ctrl+shift+e', 'workbench.showView');
+    this.keybindings.bind('ctrl+shift+h', 'workbench.showHtmlPreview');
   }
 
   private fanOut(event: ServerEvent): void {
