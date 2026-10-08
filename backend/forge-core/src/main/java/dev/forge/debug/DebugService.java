@@ -39,6 +39,8 @@ public final class DebugService implements Lifecycle.Component {
 
     private static final Log log = Log.of(DebugService.class);
     private static final int MAX_BREAKPOINTS_PER_WORKSPACE = 500;
+    private static final int MAX_DEBUG_OUTPUT_CHARS = 64 * 1024;
+    private static final int MAX_DEBUG_TEXT_CHARS = 4096;
 
     private record Active(DebugSessionId id, WorkspaceId workspace, DebugAdapter adapter, SessionInfo info) {
     }
@@ -80,19 +82,26 @@ public final class DebugService implements Lifecycle.Component {
         return adapters.keySet().stream().sorted().toList();
     }
 
-    public SessionInfo start(WorkspaceId workspace, DebugConfiguration configuration) {
+    public synchronized SessionInfo start(WorkspaceId workspace, DebugConfiguration configuration) {
         DebugAdapter adapter = adapters.get(configuration.type());
         if (adapter == null) {
             throw ForgeException.unsupported("No debug adapter for type '" + configuration.type() + "'")
                     .with("debugType", configuration.type());
         }
+        if (sessions.size() >= 32) throw ForgeException.unavailable("Too many debug sessions");
         DebugSessionId id = DebugSessionId.of(Ids.random("dbg"));
         SessionInfo info = new SessionInfo(id.value(), configuration.name(), configuration.type(),
                 SessionState.STARTING, List.of());
         sessions.put(id, new Active(id, workspace, adapter, info));
 
-        adapter.start(id, workspace, configuration, listener(workspace));
-        breakpointsByPath(workspace).forEach((path, forPath) -> adapter.setBreakpoints(id, path, forPath));
+        try {
+            adapter.start(id, workspace, configuration, listener(workspace));
+            breakpointsByPath(workspace).forEach((path, forPath) -> adapter.setBreakpoints(id, path, forPath));
+        } catch (RuntimeException | Error failure) {
+            sessions.remove(id);
+            try { adapter.stop(id); } catch (RuntimeException cleanup) { log.warn("Debug startup cleanup failed", cleanup); }
+            throw failure;
+        }
 
         log.with("workspaceId", workspace).with("debugSessionId", id).info("Debug session started");
         events.publish(new DebugEvents.DebugSessionStarted(workspace, id, configuration.name(),
@@ -101,10 +110,8 @@ public final class DebugService implements Lifecycle.Component {
     }
 
     public void stop(DebugSessionId id, WorkspaceId workspace) {
-        Active active = sessions.remove(id);
-        if (active == null) {
-            return;
-        }
+        Active active = require(id, workspace);
+        if (!sessions.remove(id, active)) return;
         try {
             active.adapter().stop(id);
         } catch (RuntimeException e) {
@@ -164,8 +171,11 @@ public final class DebugService implements Lifecycle.Component {
     }
 
     /** Toggles a breakpoint at a line, returning the workspace's full set for that file. */
-    public List<Breakpoint> toggleBreakpoint(WorkspaceId workspace, String rawPath, int line, String condition) {
+    public synchronized List<Breakpoint> toggleBreakpoint(WorkspaceId workspace, String rawPath, int line, String condition) {
+        if (line < 1 || line > 10_000_000 || (condition != null && condition.length() > 4096))
+            throw ForgeException.invalidArgument("Invalid breakpoint");
         String path = Resource.of(workspace, rawPath).path();
+        if (path.isEmpty()) throw ForgeException.invalidArgument("Breakpoint needs a file path");
         List<Breakpoint> current = new ArrayList<>(breakpoints.getOrDefault(workspace, List.of()));
         Optional<Breakpoint> existing = current.stream()
                 .filter(breakpoint -> breakpoint.path().equals(path) && breakpoint.line() == line)
@@ -198,25 +208,39 @@ public final class DebugService implements Lifecycle.Component {
         return new DebugAdapter.Listener() {
             @Override
             public void stopped(DebugSessionId session, int threadId, String reason) {
-                events.publish(new DebugEvents.DebugStopped(workspace, session, threadId, reason));
+                transition(session, workspace, SessionState.STOPPED);
+                events.publish(new DebugEvents.DebugStopped(workspace, session, threadId, bounded(reason, MAX_DEBUG_TEXT_CHARS)));
             }
 
             @Override
             public void continued(DebugSessionId session, int threadId) {
+                transition(session, workspace, SessionState.RUNNING);
                 events.publish(new DebugEvents.DebugContinued(workspace, session, threadId));
             }
 
             @Override
             public void output(DebugSessionId session, String category, String text) {
-                events.publish(new DebugEvents.DebugOutput(workspace, session, category, text));
+                events.publish(new DebugEvents.DebugOutput(workspace, session, bounded(category, 128), bounded(text, MAX_DEBUG_OUTPUT_CHARS)));
             }
 
             @Override
             public void terminated(DebugSessionId session, int exitCode) {
-                sessions.remove(session);
+                Active active = sessions.get(session);
+                if (active == null || !active.workspace().equals(workspace) || !sessions.remove(session, active)) return;
                 events.publish(new DebugEvents.DebugSessionEnded(workspace, session, exitCode));
             }
         };
+    }
+
+    private void transition(DebugSessionId id, WorkspaceId workspace, SessionState state) {
+        sessions.computeIfPresent(id, (key, active) -> active.workspace().equals(workspace)
+                ? new Active(id, workspace, active.adapter(), new SessionInfo(id.value(), active.info().name(), active.info().type(), state, active.info().threads())) : active);
+    }
+
+    private static String bounded(String value, int max) {
+        if (value == null) return "";
+        String clean = value.replace('\0', '?');
+        return clean.length() <= max ? clean : clean.substring(0, max) + "…[truncated]";
     }
 
     private Active require(DebugSessionId id, WorkspaceId workspace) {

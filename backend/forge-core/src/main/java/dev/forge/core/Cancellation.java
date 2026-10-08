@@ -51,17 +51,19 @@ public final class Cancellation {
         }
 
         public void throwIfCancelled() {
-            if (cancelled.get()) {
+            if (cancelled.get() || Thread.currentThread().isInterrupted()) {
                 throw ForgeException.cancelled("Operation cancelled");
             }
         }
 
         /** Runs {@code action} on cancellation, or immediately if already cancelled. */
         public void onCancel(Runnable action) {
+            java.util.concurrent.atomic.AtomicBoolean invoked = new java.util.concurrent.atomic.AtomicBoolean();
+            Runnable once = () -> { if (invoked.compareAndSet(false, true)) action.run(); };
+            listeners.add(once);
             if (cancelled.get()) {
-                action.run();
-            } else {
-                listeners.add(action);
+                listeners.remove(once);
+                once.run();
             }
         }
     }

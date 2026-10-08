@@ -24,7 +24,7 @@ public record Args(Map<String, Object> values) {
     public static final Args EMPTY = new Args(Map.of());
 
     public Args {
-        values = values == null ? Map.of() : Map.copyOf(values);
+        values = values == null ? Map.of() : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(values));
     }
 
     public static Args of(Map<String, Object> values) {
@@ -56,9 +56,35 @@ public record Args(Map<String, Object> values) {
             return Optional.empty();
         }
         if (!(value instanceof Number n)) {
-            throw ForgeException.invalidArgument("Argument '" + name + "' must be a number");
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
         }
-        return Optional.of(n.intValue());
+        double asDouble = n.doubleValue();
+        long asLong = n.longValue();
+        if (!Double.isFinite(asDouble) || asDouble != asLong
+                || asLong < Integer.MIN_VALUE || asLong > Integer.MAX_VALUE) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be a 32-bit integer");
+        }
+        return Optional.of((int) asLong);
+    }
+
+    public Optional<Long> longInteger(String name) {
+        Object value = values.get(name);
+        if (value == null) {
+            return Optional.empty();
+        }
+        if (!(value instanceof Number n)) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
+        }
+        double asDouble = n.doubleValue();
+        long asLong = n.longValue();
+        if (!Double.isFinite(asDouble) || asDouble != asLong) {
+            throw ForgeException.invalidArgument("Argument '" + name + "' must be an integer");
+        }
+        return Optional.of(asLong);
+    }
+
+    public long longInteger(String name, long fallback) {
+        return longInteger(name).orElse(fallback);
     }
 
     public int integer(String name, int fallback) {

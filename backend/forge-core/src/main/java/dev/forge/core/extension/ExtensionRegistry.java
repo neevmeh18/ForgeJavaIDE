@@ -51,7 +51,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
     private static final class Entry {
         final ExtensionDescriptor descriptor;
         final Loader loader;
-        final Lifecycle.Store disposables = new Lifecycle.Store();
+        Lifecycle.Store disposables = new Lifecycle.Store();
         volatile State state = State.DISCOVERED;
         volatile String failure;
         volatile Extension instance;
@@ -116,9 +116,13 @@ public final class ExtensionRegistry implements Lifecycle.Component {
             throw ForgeException.notFound("Unknown extension: " + id);
         }
         synchronized (entry) {
-            if (entry.state != State.DISCOVERED && entry.state != State.DEACTIVATED) {
+            if (entry.state != State.DISCOVERED && entry.state != State.DEACTIVATED
+                    && entry.state != State.FAILED) {
                 return;
             }
+            // A Store is single-use: dispose() permanently closes it. Every activation attempt
+            // therefore gets a fresh registration scope.
+            entry.disposables = new Lifecycle.Store();
             Log scoped = log.with("extensionId", id);
             try {
                 entry.instance = entry.loader.load(entry.descriptor);
@@ -131,8 +135,12 @@ public final class ExtensionRegistry implements Lifecycle.Component {
                 events.publish(new ExtensionEvents.ExtensionActivated(id, entry.descriptor.name()));
             } catch (Throwable t) {
                 entry.state = State.FAILED;
-                entry.failure = t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage());
+                entry.failure = "Extension activation failed; see server logs";
                 scoped.error("Extension activation failed", t);
+                if (entry.instance != null) {
+                    try { entry.instance.deactivate(); } catch (Throwable cleanup) { scoped.warn("Extension cleanup failed", cleanup); }
+                    entry.instance = null;
+                }
                 rollback(entry, id);
                 events.publish(new ExtensionEvents.ExtensionFailed(id, "activate", entry.failure));
             }
@@ -145,6 +153,7 @@ public final class ExtensionRegistry implements Lifecycle.Component {
             return;
         }
         synchronized (entry) {
+            if (entry.state != State.ACTIVATED) return;
             try {
                 entry.instance.deactivate();
             } catch (Throwable t) {

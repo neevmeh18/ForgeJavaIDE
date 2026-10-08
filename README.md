@@ -21,6 +21,7 @@ You need **Git**, **Docker** and **Docker Compose**. You do not need Java or Nod
 ```bash
 git clone <repository>
 cd ForgeJavaIDE
+export IDE_AUTH_PASSWORD='choose-a-strong-password'
 docker compose up --build
 ```
 
@@ -29,7 +30,7 @@ Then open **<http://localhost:3000>** and sign in:
 | | |
 |---|---|
 | Username | `developer` |
-| Password | `forge` |
+| Password | the value you set in `IDE_AUTH_PASSWORD` |
 
 The IDE opens the directory mounted at `/workspace`. By default that is `./workspace` in this
 repository. To work on something real:
@@ -41,8 +42,9 @@ IDE_WORKSPACE=~/code/my-project docker compose up --build
 `IDE_WORKSPACE` may also point at a folder *of* projects — the root and each immediate
 subdirectory are offered as separate workspaces, switchable from the status bar.
 
-> The default password exists so the first run works. The backend logs a warning while it is in
-> use. Set `IDE_AUTH_PASSWORD` before exposing the instance to anything but localhost.
+> Docker Compose intentionally refuses to start until `IDE_AUTH_PASSWORD` is set and publishes
+> port 3000 on host loopback only. Direct non-Docker startup also requires an explicit
+> unique password of at least 12 characters, on every bind address.
 
 ### Everyday commands
 
@@ -63,7 +65,7 @@ Your files are never in that volume; they are in whatever directory you mounted.
 
 ```bash
 curl -s localhost:3000/api/health
-# {"status":"ready","eventClients":0}
+# {"status":"ready"}
 ```
 
 The health check is readiness, not liveness: it answers `503` until the application can actually
@@ -79,8 +81,8 @@ session that has the workspace open.
 
 Beyond that first milestone:
 
-- **Command palette** (`Ctrl`/`Cmd`+`Shift`+`P`) listing every command the backend registers,
-  extensions included
+- **Command palette** (`Ctrl`/`Cmd`+`Shift`+`P`) listing interactive workbench commands and
+  extension commands; low-level commands that require raw ids/paths stay behind their dedicated UI
 - **Quick open** (`Ctrl`/`Cmd`+`P`) backed by workspace-wide file search
 - **Find in files** (`Ctrl`/`Cmd`+`Shift`+`F`), cancellable with `Esc`
 - **Editor groups**, tabs, dirty state, split editor, Monaco integration
@@ -129,17 +131,18 @@ file to edit, and no variable controls architecture — only paths, ports and li
 | Variable | Default | Meaning |
 |---|---|---|
 | `IDE_PORT` | `3000` | HTTP port |
-| `IDE_HOST` | `0.0.0.0` | Bind address |
+| `IDE_HOST` | `127.0.0.1` | Bind address for direct runs; Docker overrides this inside the container while publishing only host loopback |
 | `IDE_WORKSPACE_ROOT` | `/workspace` | Directory the local workspace provider serves |
 | `IDE_DATA_DIR` | `/data` | Settings and persisted state |
 | `IDE_WEB_ROOT` | `/app/web` | Built frontend assets |
 | `IDE_EXTENSIONS_DIR` | `/app/extensions` | Extension jars |
 | `IDE_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `IDE_AUTH_USER` | `developer` | The single configured identity |
-| `IDE_AUTH_PASSWORD` | *(development default)* | Hashed with PBKDF2 at startup |
+| `IDE_AUTH_PASSWORD` | Required, no default | At least 12 characters; hashed with PBKDF2 at startup |
 | `IDE_SHELL` | `/bin/bash` in the image | Shell used for terminals |
 | `IDE_TERMINAL_ENABLED` | `true` | Set `false` to refuse process execution entirely |
-| `IDE_SESSION_IDLE_MINUTES` | `480` | Sliding session idle timeout |
+| `IDE_SESSION_IDLE_MINUTES` | `120` | Sliding session idle timeout |
+| `IDE_SESSION_MAX_HOURS` | `12` | Hard maximum session lifetime |
 | `IDE_MAX_FILE_MB` | `8` | Largest file the editor will read or write |
 
 ### Workspace tasks

@@ -2,8 +2,9 @@
 
 # Forge — multi-stage build.
 #
-# The frontend is compiled to static assets, the backend to a jar, and only the results reach
-# the runtime image: no Maven, no npm, no build caches. The runtime is the same application
+# The frontend is compiled to static assets and the backend to a jar. Build caches stay out of
+# the runtime image; the runtime deliberately includes the Java/Node task toolchain so workspace
+# tasks such as `mvn package` and `npm test` work in the standard container. The runtime is the same application
 # assembly a developer runs on the host — Docker supplies the environment, not a different IDE.
 
 # One Java baseline for the whole project; it must match <java.version> in pom.xml.
@@ -29,15 +30,16 @@ COPY backend/forge-app/pom.xml backend/forge-app/
 COPY backend/forge-ext-demo/pom.xml backend/forge-ext-demo/
 RUN mvn -B -q -Dmaven.test.skip=true dependency:go-offline
 COPY backend ./backend
-RUN mvn -B -q -Dmaven.test.skip=true package
+RUN mvn -B -q package
 
 # ---- Runtime ------------------------------------------------------------------------------
-FROM eclipse-temurin:${JAVA_VERSION}-jre AS runtime
+FROM maven:3.9-eclipse-temurin-${JAVA_VERSION} AS runtime
 
-# git backs the source-control provider; curl is used by the health check. Nothing else is
-# added: a build toolchain in the runtime image is attack surface with no purpose.
+# git backs source control; curl backs the health check. Maven, the JDK, Node and npm are
+# intentionally present because workspace tasks are an IDE feature and the documented Java/npm
+# task examples must actually run inside the standard container.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl ca-certificates \
+    && apt-get install -y --no-install-recommends git curl ca-certificates nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # A non-root account. The container never needs to be privileged, and running as root would

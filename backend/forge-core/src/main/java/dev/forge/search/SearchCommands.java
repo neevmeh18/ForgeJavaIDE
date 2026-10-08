@@ -31,7 +31,7 @@ public final class SearchCommands {
                         limit(ctx.args().integer("limit", 50)), ctx.cancellation()));
 
         commands.register(
-                CommandDescriptor.of("search.text", "Search", "Find in Files")
+                CommandDescriptor.of("search.text", "Search", "Find in Files") .withArguments(new CommandDescriptor.Argument("query", "string", "query"))
                         .describedAs("Searches file contents across the workspace")
                         .workspaceScoped(),
                 ctx -> search.findText(ctx.requireWorkspace(),
@@ -49,7 +49,7 @@ public final class SearchCommands {
                         ctx.cancellation()));
 
         contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+p", "search.files", null));
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+shift+f", "search.text", null));
+        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+shift+f", "workbench.search", null));
     }
 
     private static int limit(int requested) {

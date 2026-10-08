@@ -30,23 +30,26 @@ public final class FileCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
         commands.register(
-                CommandDescriptor.of("file.save", "File", "Save File")
+                CommandDescriptor.of("file.save", "File", "Save File") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("content", "string", "content"), new CommandDescriptor.Argument("modifiedAt", "number", "modifiedAt"), new CommandDescriptor.Argument("revision", "string", "revision returned by file.read"))
                         .describedAs("Writes editor content to the workspace filesystem")
                         .workspaceScoped().asSensitive(),
-                ctx -> files.writeText(resource(ctx), ctx.args().requiredString("content")));
+                ctx -> files.writeText(resource(ctx), ctx.args().requiredString("content"),
+                        ctx.args().longInteger("modifiedAt").orElseThrow(() ->
+                                dev.forge.core.ForgeException.invalidArgument(
+                                        "file.save requires the modifiedAt value returned by file.read")), ctx.args().requiredString("revision")));
 
         commands.register(
-                CommandDescriptor.of("file.create", "File", "New File")
+                CommandDescriptor.of("file.create", "File", "New File") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.createFile(resource(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.createDirectory", "File", "New Folder")
+                CommandDescriptor.of("file.createDirectory", "File", "New Folder") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.createDirectory(resource(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.delete", "File", "Delete")
+                CommandDescriptor.of("file.delete", "File", "Delete") .withArguments(new CommandDescriptor.Argument("path", "string", "path"))
                         .describedAs("Deletes a file, or a directory when 'recursive' is set")
                         .workspaceScoped().asSensitive(),
                 ctx -> {
@@ -55,7 +58,7 @@ public final class FileCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("file.rename", "File", "Rename")
+                CommandDescriptor.of("file.rename", "File", "Rename") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("newName", "string", "newName"))
                         .workspaceScoped().asSensitive().asUndoable(),
                 ctx -> {
                     Resource from = resource(ctx);
@@ -63,12 +66,12 @@ public final class FileCommands {
                 });
 
         commands.register(
-                CommandDescriptor.of("file.move", "File", "Move")
+                CommandDescriptor.of("file.move", "File", "Move") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("to", "string", "to"))
                         .workspaceScoped().asSensitive().asUndoable(),
                 ctx -> files.move(resource(ctx), target(ctx)));
 
         commands.register(
-                CommandDescriptor.of("file.copy", "File", "Copy")
+                CommandDescriptor.of("file.copy", "File", "Copy") .withArguments(new CommandDescriptor.Argument("path", "string", "path"), new CommandDescriptor.Argument("to", "string", "to"))
                         .workspaceScoped().asSensitive(),
                 ctx -> files.copy(resource(ctx), target(ctx)));
 
@@ -84,9 +87,9 @@ public final class FileCommands {
                 QueryDescriptor.of("file.stat", "File metadata").workspaceScoped(),
                 (ctx, args) -> files.stat(resource(ctx, args)));
 
-        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+s", "file.save", "editorFocus"));
+        contributions.addKeybinding(ContributionRegistry.Keybinding.of("ctrl+s", "workbench.save", "editorFocus"));
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(
-                ContributionRegistry.MENU_FILE, "file.save", "Save", "write", 10));
+                ContributionRegistry.MENU_FILE, "workbench.save", "Save", "write", 10));
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(
                 ContributionRegistry.MENU_EXPLORER_CONTEXT, "file.rename", "Rename…", "edit", 10));
         contributions.addMenuItem(ContributionRegistry.MenuItem.of(

@@ -39,7 +39,7 @@ public final class Log {
             return this;
         }
         Map<String, String> merged = new LinkedHashMap<>(context);
-        merged.put(key, redact(key, String.valueOf(value)));
+        merged.put(sanitize(key), redact(key, sanitize(String.valueOf(value))));
         return new Log(delegate, Map.copyOf(merged));
     }
 
@@ -69,7 +69,13 @@ public final class Log {
         delegate.log(Logger.Level.ERROR, format(message), t);
     }
 
+    private static String sanitize(String value) {
+        String bounded = value.length() > 2048 ? value.substring(0, 2048) : value;
+        return bounded.replaceAll("[\\p{Cntrl}\\p{Cf}\\p{Zl}\\p{Zp}]", "?");
+    }
+
     private String format(String message) {
+        message = sanitize(message);
         if (context.isEmpty()) {
             return message;
         }

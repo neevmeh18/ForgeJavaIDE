@@ -27,6 +27,7 @@ import { describeError as describe } from '../forge/client';
 };
 
 interface OpenTab {
+  workspaceGeneration: number;
   documentId: string;
   path: string;
   model: monaco.editor.ITextModel;
@@ -49,6 +50,8 @@ export class EditorArea {
 
   private groups: Group[] = [];
   private activeGroup = 0;
+  private autoSave = false;
+  private readonly applyingRemote = new Set<string>();
   private readonly placeholder = el(
     'div',
     { class: 'editor-placeholder' },
@@ -62,11 +65,42 @@ export class EditorArea {
     ctx.on('editor.dirtyStateChanged', (event) => {
       const payload = event.payload as { documentId: string; dirty: boolean };
       this.forEachTab((tab, group) => {
-        if (tab.documentId === payload.documentId && tab.dirty !== payload.dirty) {
+        if (payload.dirty && tab.documentId === payload.documentId && tab.dirty !== payload.dirty) {
           tab.dirty = payload.dirty;
           this.renderTabs(group);
         }
       });
+    });
+    ctx.on('editor.documentChanged', (event) => {
+      const payload = event.payload as { documentId: string; path: string; version: number };
+      this.forEachTab((tab, group) => {
+        if (tab.documentId !== payload.documentId) return;
+        if (tab.path !== payload.path) {
+          tab.path = payload.path;
+          tab.version = Math.max(tab.version, payload.version);
+          this.renderTabs(group);
+        }
+        if (payload.version <= tab.version || tab.dirty) return;
+        void this.ctx.client.query<OpenDocument>('editor.document', { documentId: tab.documentId })
+          .then((opened) => {
+            if (tab.model.isDisposed() || opened.document.version < tab.version || tab.dirty) return;
+            this.applyingRemote.add(tab.documentId);
+            try {
+              tab.model.setValue(opened.text);
+              tab.version = opened.document.version;
+              tab.dirty = opened.document.dirty;
+              tab.path = opened.document.path;
+            } finally {
+              this.applyingRemote.delete(tab.documentId);
+            }
+            this.renderTabs(group);
+          })
+          .catch(() => undefined);
+      });
+    });
+    ctx.on('editor.closed', (event) => {
+      const payload = event.payload as { documentId: string };
+      this.discardTab(payload.documentId);
     });
     ctx.on('language.diagnostics', (event) => {
       const payload = event.payload as { path: string; diagnostics: Diagnostic[] };
@@ -77,6 +111,20 @@ export class EditorArea {
       this.applyBreakpoints(payload.path, payload.breakpoints.map((breakpoint) => breakpoint.line));
     });
     ctx.on('workspace.closed', () => this.closeEverything());
+    ctx.on('forge.resync', () => {
+      this.forEachTab((tab, group) => {
+        void this.ctx.client.query<OpenDocument>('editor.document', { documentId: tab.documentId }).then((opened) => {
+          if (tab.model.isDisposed()) return;
+          tab.path = opened.document.path;
+          if (!tab.dirty) {
+            this.applyingRemote.add(tab.documentId);
+            try { tab.model.setValue(opened.text); tab.version = opened.document.version; }
+            finally { this.applyingRemote.delete(tab.documentId); }
+          }
+          this.renderTabs(group);
+        }).catch(() => this.ctx.notify('warning', 'An editor could not be refreshed after reconnect; reload it before saving.'));
+      });
+    });
   }
 
   /** Splits the editor area. A second group is as far as the first milestone goes. */
@@ -102,12 +150,15 @@ export class EditorArea {
       this.ctx.notify('error', describe(error));
       return;
     }
+    const duplicate = group.tabs.find((tab) => tab.documentId === opened.document.id);
+    if (duplicate) { this.activate(group, duplicate.documentId, line); return; }
     const model = monaco.editor.createModel(
       opened.text,
       monacoLanguage(opened.document.languageId),
-      monaco.Uri.parse(`forge:/${path}`),
+      monaco.Uri.parse(`forge:/${opened.document.id}/${path}`),
     );
     const tab: OpenTab = {
+      workspaceGeneration: this.ctx.client.workspaceGeneration,
       documentId: opened.document.id,
       path,
       model,
@@ -115,25 +166,44 @@ export class EditorArea {
       dirty: opened.document.dirty,
       viewState: null,
     };
+    model.updateOptions({ tabSize: clampNumber(this.ctx.state.settings.get('editor.tabSize'), 1, 16, 4) });
     model.onDidChangeContent(() => this.onLocalEdit(tab));
     group.tabs.push(tab);
     this.activate(group, tab.documentId, line);
   }
 
-  /** `file.save` for the active document. The content travels with the command. */
+  /** Saves the active versioned editor buffer without bypassing conflict detection. */
   async saveActive(): Promise<void> {
     const group = this.groups[this.activeGroup];
     const tab = group ? this.tabOf(group, group.active) : null;
-    if (!tab) {
-      return;
-    }
-    try {
-      await this.ctx.commands.execute('file.save', { path: tab.path, content: tab.model.getValue() });
-      tab.dirty = false;
-      this.renderTabs(group);
-    } catch (error) {
-      this.ctx.notify('error', describe(error));
-    }
+    if (!tab) return;
+    await this.saveTab(tab, group);
+  }
+
+  private async saveTab(tab: OpenTab, group?: Group): Promise<void> {
+    window.clearTimeout(this.syncTimers.get(tab.documentId));
+    this.syncTimers.delete(tab.documentId);
+    await this.enqueue(tab, async () => {
+      const text = tab.model.getValue();
+      const opened = await this.ctx.client.command<OpenDocument>('editor.save', {
+        documentId: tab.documentId, text, version: tab.version,
+      });
+      if (tab.model.isDisposed()) return;
+      tab.version = opened.document.version;
+      tab.dirty = tab.model.getValue() !== text || opened.document.dirty;
+      if (group) this.renderTabs(group);
+    });
+  }
+
+  private enqueue(tab: OpenTab, operation: () => Promise<void>): Promise<void> {
+    const previous = this.syncPromises.get(tab.documentId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(async () => {
+      if (tab.model.isDisposed() || tab.workspaceGeneration !== this.ctx.client.workspaceGeneration) return;
+      await operation();
+    }).catch((error: unknown) => this.ctx.notify('error', describe(error)));
+    this.syncPromises.set(tab.documentId, next);
+    void next.finally(() => { if (this.syncPromises.get(tab.documentId) === next) this.syncPromises.delete(tab.documentId); });
+    return next;
   }
 
   async closeActive(): Promise<void> {
@@ -178,6 +248,40 @@ export class EditorArea {
     return group ? (this.tabOf(group, group.active)?.path ?? null) : null;
   }
 
+  activePosition(): { line: number; character: number } | null {
+    const group = this.groups[this.activeGroup];
+    const position = group?.editor.getPosition();
+    return position ? { line: position.lineNumber - 1, character: position.column - 1 } : null;
+  }
+
+  hasDirty(): boolean {
+    return this.groups.some((group) => group.tabs.some((tab) => tab.dirty));
+  }
+
+  async prepareWorkspaceChange(): Promise<boolean> {
+    if (this.hasDirty() && !window.confirm('This workspace has unsaved editor changes. Switch and discard them?')) {
+      return false;
+    }
+    const ids = this.groups.flatMap((group) => group.tabs.map((tab) => tab.documentId));
+    this.closeEverything();
+    await Promise.allSettled(ids.map((documentId) => this.ctx.client.command('editor.close', { documentId })));
+    return true;
+  }
+
+  applySettings(settings: Map<string, unknown>): void {
+    const fontSize = clampNumber(settings.get('editor.fontSize'), 8, 40, 13);
+    const tabSize = clampNumber(settings.get('editor.tabSize'), 1, 16, 4);
+    const wordWrap = settings.get('editor.wordWrap') === true ? 'on' : 'off';
+    const minimap = settings.get('editor.minimap') === true;
+    this.autoSave = settings.get('files.autoSave') === true;
+    this.forEachTab((tab) => tab.model.updateOptions({ tabSize }));
+    this.groups.forEach((group) => group.editor.updateOptions({
+      fontSize,
+      wordWrap,
+      minimap: { enabled: minimap },
+    }));
+  }
+
   layout(): void {
     this.groups.forEach((group) => group.editor.layout());
   }
@@ -205,8 +309,10 @@ export class EditorArea {
     const editor = monaco.editor.create(host, {
       automaticLayout: true,
       theme: document.documentElement.dataset.theme === 'light' ? 'vs' : 'vs-dark',
-      fontSize: 13,
-      minimap: { enabled: false },
+      fontSize: clampNumber(this.ctx.state.settings.get('editor.fontSize'), 8, 40, 13),
+      tabSize: clampNumber(this.ctx.state.settings.get('editor.tabSize'), 1, 16, 4),
+      wordWrap: this.ctx.state.settings.get('editor.wordWrap') === true ? 'on' : 'off',
+      minimap: { enabled: this.ctx.state.settings.get('editor.minimap') === true },
       glyphMargin: true,
       scrollBeyondLastLine: false,
       renderWhitespace: 'selection',
@@ -297,6 +403,11 @@ export class EditorArea {
     } catch {
       // Closing is best-effort: the buffer may already be gone on the backend.
     }
+    window.clearTimeout(this.syncTimers.get(documentId));
+    window.clearTimeout(this.autoSaveTimers.get(documentId));
+    this.syncTimers.delete(documentId);
+    this.syncPromises.delete(documentId);
+    this.autoSaveTimers.delete(documentId);
     tab.model.dispose();
     group.tabs = group.tabs.filter((candidate) => candidate.documentId !== documentId);
     group.active = group.tabs.at(-1)?.documentId ?? null;
@@ -308,7 +419,32 @@ export class EditorArea {
     }
   }
 
+  private discardTab(documentId: string): void {
+    for (const group of this.groups) {
+      const tab = this.tabOf(group, documentId);
+      if (!tab) continue;
+      window.clearTimeout(this.syncTimers.get(documentId));
+      window.clearTimeout(this.autoSaveTimers.get(documentId));
+      this.syncTimers.delete(documentId);
+      this.autoSaveTimers.delete(documentId);
+      tab.model.dispose();
+      group.tabs = group.tabs.filter((candidate) => candidate.documentId !== documentId);
+      if (group.active === documentId) {
+        group.active = group.tabs.at(-1)?.documentId ?? null;
+        if (group.active) this.activate(group, group.active);
+        else group.editor.setModel(null);
+      }
+      this.renderTabs(group);
+    }
+  }
+
   private closeEverything(): void {
+    this.syncTimers.forEach((timer) => window.clearTimeout(timer));
+    this.autoSaveTimers.forEach((timer) => window.clearTimeout(timer));
+    this.breakpointDecorations.clear();
+    this.syncTimers.clear();
+    this.syncPromises.clear();
+    this.autoSaveTimers.clear();
     this.groups.forEach((group) => {
       group.tabs.forEach((tab) => tab.model.dispose());
       group.tabs = [];
@@ -323,6 +459,7 @@ export class EditorArea {
    * language tooling see what the user actually typed rather than the file on disk.
    */
   private onLocalEdit(tab: OpenTab): void {
+    if (this.applyingRemote.has(tab.documentId)) return;
     tab.dirty = true;
     const group = this.groups.find((candidate) => candidate.tabs.includes(tab));
     if (group) {
@@ -332,22 +469,25 @@ export class EditorArea {
     this.syncTimers.set(
       tab.documentId,
       window.setTimeout(() => {
-        void this.ctx.client
-          .command<{ version: number }>('editor.update', {
-            documentId: tab.documentId,
-            text: tab.model.getValue(),
-          })
-          .then((document) => {
-            tab.version = document.version;
-          })
-          .catch(() => {
-            // A failed sync only costs language intelligence; the buffer is still the user's.
+        void this.enqueue(tab, async () => {
+          const document = await this.ctx.client.command<{ version: number }>('editor.update', {
+            documentId: tab.documentId, text: tab.model.getValue(), version: tab.version,
           });
+          if (tab.model.isDisposed()) return;
+          tab.version = document.version;
+          if (this.autoSave) {
+            const owner = this.groups.find((candidate) => candidate.tabs.includes(tab));
+            window.clearTimeout(this.autoSaveTimers.get(tab.documentId));
+            this.autoSaveTimers.set(tab.documentId, window.setTimeout(() => void this.saveTab(tab, owner), 800));
+          }
+        });
       }, 400),
     );
   }
 
   private syncTimers = new Map<string, number>();
+  private syncPromises = new Map<string, Promise<unknown>>();
+  private autoSaveTimers = new Map<string, number>();
 
   private forEachTab(visit: (tab: OpenTab, group: Group) => void): void {
     this.groups.forEach((group) => group.tabs.forEach((tab) => visit(tab, group)));
@@ -520,4 +660,9 @@ function monacoLanguage(languageId: string): string {
     plaintext: 'plaintext',
   };
   return aliases[languageId] ?? languageId;
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
 }

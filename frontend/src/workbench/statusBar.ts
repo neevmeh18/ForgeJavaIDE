@@ -20,7 +20,7 @@ export class StatusBar {
   constructor(private readonly ctx: WorkbenchContext) {
     this.workspaceSlot.addEventListener('click', () => void ctx.commands.execute('workbench.openWorkspace'));
     this.branchSlot.addEventListener('click', () => ctx.showView('scm'));
-    this.problemsSlot.addEventListener('click', () => ctx.showView('problems'));
+    this.problemsSlot.addEventListener('click', () => void ctx.commands.execute('workbench.showLogs'));
     this.element.append(
       this.workspaceSlot,
       this.branchSlot,

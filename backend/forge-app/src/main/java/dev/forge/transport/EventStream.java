@@ -1,5 +1,6 @@
 package dev.forge.transport;
 
+import dev.forge.core.ForgeException;
 import dev.forge.core.Ids.SessionId;
 import dev.forge.core.Lifecycle;
 import dev.forge.core.Log;
@@ -11,83 +12,126 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiPredicate;
 
-/**
- * Fans events out to connected clients, and decides who is allowed to see what.
- *
- * <p>Delivery is filtered, not broadcast. An event addressed to a session goes only there; an
- * event belonging to a workspace goes only to sessions attached to that workspace; the rest
- * reach every authenticated client. Without this, knowing the event stream URL would leak other
- * people's file changes and terminal output.
- *
- * <p>Each client has a bounded queue. A client that cannot keep up — a closed laptop lid, a
- * stalled connection — loses its oldest events rather than growing the server's heap.
- */
+/** Bounded, visibility-filtered server-sent event fan-out. */
 public final class EventStream implements Lifecycle.Component {
 
     private static final Log log = Log.of(EventStream.class);
-    private static final int QUEUE_CAPACITY = 4096;
+    private static final int QUEUE_CAPACITY = 2048;
 
-    /** The wire shape of an event: a name, its scope, and the event's own fields as payload. */
-    private record Frame(String type, String workspaceId, Object payload) {
-    }
+    private record Frame(String type, String workspaceId, Object payload) { }
 
-    /** One connected client. The HTTP handler owns it and pumps it until the socket closes. */
     public final class Client implements Lifecycle.Disposable {
-
         private final SessionId session;
         private final BlockingQueue<String> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+        private final AtomicBoolean disposed = new AtomicBoolean();
+        private volatile boolean overflowed;
 
         private Client(SessionId session) {
             this.session = session;
         }
 
-        /** Next encoded event, or {@code null} when the wait elapsed and a heartbeat is due. */
         public String poll(Duration timeout) throws InterruptedException {
-            return queue.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            if (overflowed) {
+                overflowed = false;
+                return "event: forge.resync\ndata: {\"type\":\"forge.resync\",\"workspaceId\":null,\"payload\":{}}\n\n";
+            }
+            if (disposed.get()) throw new InterruptedException("Event stream closed");
+            String frame = queue.poll(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            synchronized (this) { if (frame != null) queuedChars = Math.max(0, queuedChars - frame.length()); }
+            return frame;
         }
 
-        private void offer(String frame) {
-            while (!queue.offer(frame)) {
-                queue.poll();
+        private int queuedChars;
+
+        private synchronized void offer(String frame) {
+            if (disposed.get()) return;
+            if (frame.length() > 1024 * 1024 || queuedChars + frame.length() > 2 * 1024 * 1024) {
+                queue.clear(); queuedChars = 0; overflowed = true;
+                return;
+            }
+            queuedChars += frame.length();
+            if (!queue.offer(frame)) {
+                // Never silently pretend delivery is reliable. Drop old data, then explicitly
+                // tell the client to refresh authoritative state.
+                queue.clear();
+                queuedChars = frame.length();
+                overflowed = true;
+                queue.offer(frame);
             }
         }
 
         @Override
         public void dispose() {
+            if (!disposed.compareAndSet(false, true)) {
+                return;
+            }
+            queue.clear();
+            queue.offer(": closed\n\n");
+            synchronized (clientsBySession) {
             clients.remove(this);
+            AtomicInteger count = clientsBySession.get(session);
+            if (count != null && count.decrementAndGet() <= 0) {
+                clientsBySession.remove(session, count);
+            }
+            }
         }
     }
 
     private final Set<Client> clients = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<SessionId, AtomicInteger> clientsBySession = new ConcurrentHashMap<>();
     private final EventBus events;
     private final Json json;
     private final BiPredicate<SessionId, Event> visibility;
     private final Lifecycle.Store subscriptions = new Lifecycle.Store();
+    private final int maxClients;
+    private final int maxClientsPerSession;
 
-    public EventStream(EventBus events, Json json, BiPredicate<SessionId, Event> visibility) {
+    public EventStream(EventBus events, Json json, BiPredicate<SessionId, Event> visibility,
+                       int maxClients, int maxClientsPerSession) {
         this.events = events;
         this.json = json;
         this.visibility = visibility;
+        this.maxClients = maxClients;
+        this.maxClientsPerSession = maxClientsPerSession;
     }
 
     @Override
     public void start() {
         subscriptions.add(events.subscribeAll(this::dispatch));
+        subscriptions.add(events.subscribe(dev.forge.auth.AuthEvents.SessionEnded.class, event ->
+                java.util.List.copyOf(clients).stream().filter(client -> client.session.equals(event.sessionId())).forEach(Client::dispose)));
     }
 
     @Override
     public void dispose() {
         subscriptions.dispose();
+        java.util.List.copyOf(clients).forEach(Client::dispose);
         clients.clear();
+        clientsBySession.clear();
     }
 
     public Client open(SessionId session) {
-        Client client = new Client(session);
-        clients.add(client);
-        log.with("sessionId", session).debug("Event stream opened");
-        return client;
+        synchronized (clientsBySession) {
+            if (clients.size() >= maxClients) {
+                throw ForgeException.unavailable("Too many event-stream clients");
+            }
+            AtomicInteger count = clientsBySession.computeIfAbsent(session, ignored -> new AtomicInteger());
+            if (count.get() >= maxClientsPerSession) {
+                if (count.get() == 0) {
+                    clientsBySession.remove(session, count);
+                }
+                throw ForgeException.unavailable("Too many event streams for this session");
+            }
+            count.incrementAndGet();
+            Client client = new Client(session);
+            clients.add(client);
+            log.with("sessionId", session).debug("Event stream opened");
+            return client;
+        }
     }
 
     public int connectedClients() {
@@ -106,10 +150,10 @@ public final class EventStream implements Lifecycle.Component {
         }
     }
 
-    /** Server-sent-events framing: a named event whose data is one line of JSON. */
     private String encode(Event event) {
         Frame frame = new Frame(event.type(),
                 event.workspaceId() == null ? null : event.workspaceId().value(), event);
         return "event: " + event.type() + "\ndata: " + json.write(frame) + "\n\n";
     }
+
 }

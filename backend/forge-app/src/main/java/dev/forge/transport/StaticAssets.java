@@ -38,10 +38,16 @@ public final class StaticAssets {
             Map.entry("map", "application/json"),
             Map.entry("ttf", "font/ttf"));
 
+    private static final long MAX_ASSET_BYTES = 32L * 1024 * 1024;
     private final Path root;
 
     public StaticAssets(Path root) {
-        this.root = root.toAbsolutePath().normalize();
+        Path normalized = root.toAbsolutePath().normalize();
+        try {
+            this.root = Files.isDirectory(normalized) ? normalized.toRealPath() : normalized;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Web root is not usable", e);
+        }
     }
 
     public boolean isAvailable() {
@@ -57,6 +63,10 @@ public final class StaticAssets {
                 respond(exchange, 404, "text/plain; charset=utf-8", "Not found".getBytes(), false);
                 return;
             }
+        }
+        if (Files.size(file) > MAX_ASSET_BYTES) {
+            respond(exchange, 413, "text/plain; charset=utf-8", "Asset too large".getBytes(), false);
+            return;
         }
         byte[] body = Files.readAllBytes(file);
         String name = file.getFileName().toString();
@@ -97,7 +107,15 @@ public final class StaticAssets {
             log.with("path", requested).warn("Rejected static path outside the web root");
             return null;
         }
-        return Files.isRegularFile(candidate) ? candidate : null;
+        if (!Files.isRegularFile(candidate, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return null;
+        }
+        try {
+            Path real = candidate.toRealPath(java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return real.startsWith(root) && !Files.isSymbolicLink(candidate) ? real : null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     private static String contentType(String name) {

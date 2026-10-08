@@ -104,19 +104,19 @@ public class ForgeException extends RuntimeException {
             return cancelled("Operation cancelled");
         }
         if (unwrapped instanceof IllegalArgumentException) {
-            return invalidArgument(unwrapped.getMessage() == null ? "Invalid argument" : unwrapped.getMessage());
+            return invalidArgument("Invalid argument");
         }
         if (unwrapped instanceof java.nio.file.NoSuchFileException e) {
-            return notFound("No such resource: " + e.getFile());
+            return notFound("Resource does not exist");
         }
         if (unwrapped instanceof java.nio.file.FileAlreadyExistsException e) {
-            return conflict("Already exists: " + e.getFile());
+            return conflict("Resource already exists");
         }
         if (unwrapped instanceof java.nio.file.AccessDeniedException) {
             return forbidden("Access denied");
         }
         if (unwrapped instanceof UnsupportedOperationException) {
-            return unsupported(unwrapped.getMessage() == null ? "Unsupported operation" : unwrapped.getMessage());
+            return unsupported("Unsupported operation");
         }
         return internal("Internal failure", unwrapped);
     }

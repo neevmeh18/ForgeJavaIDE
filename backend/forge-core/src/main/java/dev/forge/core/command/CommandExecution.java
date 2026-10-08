@@ -1,6 +1,7 @@
 package dev.forge.core.command;
 
 import dev.forge.core.Cancellation;
+import dev.forge.core.Ids.SessionId;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 
@@ -26,13 +27,15 @@ public final class CommandExecution {
     private final CommandId commandId;
     private final Instant startedAt;
     private final Cancellation cancellation;
+    private final SessionId sessionId;
     private final CompletableFuture<Object> result = new CompletableFuture<>();
     private volatile State state = State.QUEUED;
 
-    CommandExecution(String id, CommandId commandId, Cancellation cancellation) {
+    CommandExecution(String id, CommandId commandId, Cancellation cancellation, SessionId sessionId) {
         this.id = id;
         this.commandId = commandId;
         this.cancellation = cancellation;
+        this.sessionId = sessionId;
         this.startedAt = Instant.now();
     }
 
@@ -50,6 +53,10 @@ public final class CommandExecution {
 
     public Instant startedAt() {
         return startedAt;
+    }
+
+    public SessionId sessionId() {
+        return sessionId;
     }
 
     /** Completes with the command's typed result, or fails with a {@code ForgeException}. */

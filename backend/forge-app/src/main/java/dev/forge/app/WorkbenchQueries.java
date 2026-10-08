@@ -25,11 +25,12 @@ final class WorkbenchQueries {
 
     /** A command as the palette sees it. */
     record CommandView(String id, String title, String category, String description,
-                       boolean requiresWorkspace, boolean undoable, boolean sensitive, String source) {
+                       boolean requiresWorkspace, boolean undoable, boolean sensitive, String source,
+                       boolean paletteVisible, List<CommandDescriptor.Argument> arguments) {
         static CommandView of(CommandDescriptor descriptor) {
             return new CommandView(descriptor.id().value(), descriptor.title(), descriptor.category(),
                     descriptor.description(), descriptor.requiresWorkspace(), descriptor.undoable(),
-                    descriptor.sensitive(), descriptor.source());
+                    descriptor.sensitive(), descriptor.source(), true, descriptor.arguments());
         }
     }
 
@@ -82,12 +83,15 @@ final class WorkbenchQueries {
         // Cancellation is itself a command, so cancelling works identically from the palette, a
         // keybinding, the CLI or an automation client.
         registry.register(
-                CommandDescriptor.of("command.cancel", "Workbench", "Cancel Running Command")
+                CommandDescriptor.of("command.cancel", "Workbench", "Cancel Running Command") .withArguments(new CommandDescriptor.Argument("executionId", "string", "executionId"))
                         .describedAs("Requests cancellation of an in-flight command execution"),
-                ctx -> executor.cancel(ctx.args().requiredString("executionId")));
+                ctx -> executor.cancel(ctx.args().requiredString("executionId"), ctx.sessionId()));
+
+        registry.register(CommandDescriptor.of("extension.deactivate", "Extensions", "Deactivate Extension") .withArguments(new CommandDescriptor.Argument("extensionId", "string", "extensionId")).asSensitive(),
+                ctx -> { extensions.deactivate(dev.forge.core.Ids.ExtensionId.of(ctx.args().requiredString("extensionId"))); return null; });
 
         registry.register(
-                CommandDescriptor.of("extension.activate", "Extensions", "Activate Extension").asSensitive(),
+                CommandDescriptor.of("extension.activate", "Extensions", "Activate Extension") .withArguments(new CommandDescriptor.Argument("extensionId", "string", "extensionId")).asSensitive(),
                 ctx -> {
                     extensions.activate(dev.forge.core.Ids.ExtensionId.of(
                             ctx.args().requiredString("extensionId")));

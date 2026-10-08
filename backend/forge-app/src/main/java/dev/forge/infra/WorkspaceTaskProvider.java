@@ -34,6 +34,10 @@ public final class WorkspaceTaskProvider implements TaskProvider {
     private static final Log log = Log.of(WorkspaceTaskProvider.class);
     private static final String TASK_FILE = ".forge/tasks.json";
     private static final long MAX_BYTES = 256 * 1024;
+    private static final int MAX_TASKS = 128;
+    private static final int MAX_ARGUMENTS = 128;
+    private static final int MAX_ENV = 64;
+    private static final int MAX_FIELD = 4096;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final FileSystem.Locator locator;
@@ -65,10 +69,19 @@ public final class WorkspaceTaskProvider implements TaskProvider {
             if (!(declared instanceof List<?> entries)) {
                 return List.of();
             }
+            if (entries.size() > MAX_TASKS) {
+                log.with("workspaceId", workspace).warn("Ignoring task file with too many tasks");
+                return List.of();
+            }
             List<Task> tasks = new ArrayList<>();
+            java.util.Set<String> ids = new java.util.HashSet<>();
             for (Object entry : entries) {
                 if (entry instanceof Map<?, ?> fields) {
-                    tasks.add(toTask((Map<String, Object>) fields));
+                    Task task = toTask((Map<String, Object>) fields);
+                    if (!ids.add(task.id())) {
+                        throw new IllegalArgumentException("Duplicate task id: " + task.id());
+                    }
+                    tasks.add(task);
                 }
             }
             return List.copyOf(tasks);
@@ -79,29 +92,53 @@ public final class WorkspaceTaskProvider implements TaskProvider {
     }
 
     private static Task toTask(Map<String, Object> fields) {
-        String command = string(fields, "command", "");
+        String command = string(fields, "command", "", true);
+        if (command.isBlank()) {
+            throw new IllegalArgumentException("Task command is required");
+        }
+        String id = string(fields, "id", "", true);
+        if (id.isBlank() || !id.matches("[A-Za-z0-9._:-]{1,128}")) {
+            throw new IllegalArgumentException("Task id is required and must be a simple identifier");
+        }
         List<String> arguments = new ArrayList<>();
         if (fields.get("args") instanceof List<?> declared) {
-            declared.forEach(argument -> arguments.add(String.valueOf(argument)));
+            if (declared.size() > MAX_ARGUMENTS) {
+                throw new IllegalArgumentException("Too many task arguments");
+            }
+            declared.forEach(argument -> arguments.add(limited(String.valueOf(argument))));
         }
         Map<String, String> env = new LinkedHashMap<>();
         if (fields.get("env") instanceof Map<?, ?> declared) {
-            declared.forEach((key, value) -> env.put(String.valueOf(key), String.valueOf(value)));
+            if (declared.size() > MAX_ENV) {
+                throw new IllegalArgumentException("Too many task environment variables");
+            }
+            declared.forEach((key, value) -> env.put(limited(String.valueOf(key)), limited(String.valueOf(value))));
         }
         return new Task(
-                string(fields, "id", command),
-                string(fields, "name", command),
-                string(fields, "type", Task.TYPE_RUN),
+                id,
+                string(fields, "name", id, false),
+                string(fields, "type", Task.TYPE_RUN, false),
                 command,
                 List.copyOf(arguments),
-                string(fields, "cwd", ""),
+                string(fields, "cwd", "", false),
                 Map.copyOf(env),
                 Boolean.TRUE.equals(fields.get("shell")),
                 "workspace");
     }
 
-    private static String string(Map<String, Object> fields, String key, String fallback) {
+    private static String string(Map<String, Object> fields, String key, String fallback, boolean allowBlank) {
         Object value = fields.get(key);
-        return value instanceof String text && !text.isBlank() ? text : fallback;
+        if (!(value instanceof String text)) {
+            return fallback;
+        }
+        String trimmed = limited(text).trim();
+        return !allowBlank && trimmed.isBlank() ? fallback : trimmed;
+    }
+
+    private static String limited(String value) {
+        if (value.length() > MAX_FIELD || value.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Task field is too large or invalid");
+        }
+        return value;
     }
 }

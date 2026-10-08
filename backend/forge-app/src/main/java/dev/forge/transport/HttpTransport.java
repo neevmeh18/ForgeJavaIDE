@@ -17,7 +17,12 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -43,6 +48,9 @@ public final class HttpTransport implements Lifecycle.Component {
     private static final Log log = Log.of(HttpTransport.class);
     private static final long MAX_BODY_BYTES = 16L * 1024 * 1024;
     private static final Duration HEARTBEAT = Duration.ofSeconds(20);
+    private static final int MAX_BEARER_CHARS = 256;
+    private static final int MAX_LOGIN_ATTEMPTS_PER_MINUTE = 8;
+    private static final int MAX_CONCURRENT_REQUESTS = 256;
 
     private static final String CONTENT_SECURITY_POLICY = String.join("; ",
             "default-src 'self'",
@@ -64,10 +72,23 @@ public final class HttpTransport implements Lifecycle.Component {
     private final Supplier<Boolean> readiness;
     private final String host;
     private final int port;
+    private final Duration requestBodyTimeout;
+    private final Semaphore requestSlots = new Semaphore(MAX_CONCURRENT_REQUESTS);
+    private final ConcurrentHashMap<String, LoginWindow> loginWindows = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService deadlines = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "forge-http-deadlines");
+        thread.setDaemon(true);
+        return thread;
+    });
     private HttpServer server;
 
+    private static final class LoginWindow {
+        long startedAt = System.currentTimeMillis();
+        int attempts;
+    }
+
     public HttpTransport(Gateway gateway, Json json, EventStream stream, StaticAssets assets,
-                         Supplier<Boolean> readiness, String host, int port) {
+                         Supplier<Boolean> readiness, String host, int port, Duration requestBodyTimeout) {
         this.gateway = gateway;
         this.json = json;
         this.stream = stream;
@@ -75,11 +96,15 @@ public final class HttpTransport implements Lifecycle.Component {
         this.readiness = readiness;
         this.host = host;
         this.port = port;
+        this.requestBodyTimeout = requestBodyTimeout;
     }
 
     @Override
     public void start() {
         try {
+            System.setProperty("jdk.httpserver.maxConnections", "512");
+            System.setProperty("sun.net.httpserver.maxReqHeaders", "100");
+            System.setProperty("sun.net.httpserver.maxReqTime", String.valueOf(requestBodyTimeout.toSeconds()));
             server = HttpServer.create(new InetSocketAddress(host, port), 64);
         } catch (IOException e) {
             throw ForgeException.internal("Could not bind " + host + ":" + port, e);
@@ -105,6 +130,7 @@ public final class HttpTransport implements Lifecycle.Component {
         if (server != null) {
             server.stop(1);
         }
+        deadlines.shutdownNow();
     }
 
     @FunctionalInterface
@@ -114,24 +140,35 @@ public final class HttpTransport implements Lifecycle.Component {
 
     private void handle(HttpExchange exchange, Route route) throws IOException {
         securityHeaders(exchange);
+        if (!requestSlots.tryAcquire()) {
+            writeJson(exchange, 503, new Gateway.Result(false, null,
+                    new Gateway.ErrorView("UNAVAILABLE", "Server is busy", Map.of()), null, false));
+            exchange.close();
+            return;
+        }
         try {
             route.handle(exchange);
         } catch (ForgeException e) {
             writeJson(exchange, statusFor(e.code()), new Gateway.Result(false, null,
-                    new Gateway.ErrorView(e.code().name(), e.getMessage(), e.details()), null, false));
+                    Gateway.ErrorView.of(e), null, false));
         } catch (RuntimeException e) {
             log.error("Unhandled transport failure", e);
             writeJson(exchange, 500, new Gateway.Result(false, null,
                     new Gateway.ErrorView("INTERNAL_FAILURE", "An internal error occurred", Map.of()),
                     null, false));
         } finally {
+            requestSlots.release();
             exchange.close();
         }
     }
 
     private void command(HttpExchange exchange) throws IOException {
+        requirePath(exchange, "/api/command");
         requirePost(exchange);
         Map<String, Object> body = readBody(exchange);
+        if ("auth.login".equals(body.get("id"))) {
+            checkLoginRate(exchange);
+        }
         Cancellation cancellation = new Cancellation();
         RequestContext ctx = context(exchange, cancellation);
         String id = requireString(body, "id");
@@ -143,6 +180,7 @@ public final class HttpTransport implements Lifecycle.Component {
     }
 
     private void query(HttpExchange exchange) throws IOException {
+        requirePath(exchange, "/api/query");
         requirePost(exchange);
         Map<String, Object> body = readBody(exchange);
         Cancellation cancellation = new Cancellation();
@@ -157,23 +195,29 @@ public final class HttpTransport implements Lifecycle.Component {
      * intermediaries from closing an idle connection.
      */
     private void events(HttpExchange exchange) throws IOException {
+        requirePath(exchange, "/api/events");
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            throw ForgeException.invalidArgument("Expected GET");
+        }
         RequestContext ctx = context(exchange, new Cancellation());
         if (!ctx.isAuthenticated()) {
             throw ForgeException.unauthorized("Authentication required");
         }
+        EventStream.Client client = stream.open(ctx.sessionId());
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-transform");
         exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
         exchange.sendResponseHeaders(200, 0);
-
-        EventStream.Client client = stream.open(ctx.sessionId());
         try (Writer writer = new OutputStreamWriter(exchange.getResponseBody(), StandardCharsets.UTF_8)) {
             writer.write(": connected\n\n");
             writer.flush();
             while (!Thread.currentThread().isInterrupted()) {
                 String frame = client.poll(HEARTBEAT);
-                writer.write(frame == null ? ": ping\n\n" : frame);
-                writer.flush();
+                ScheduledFuture<?> writeDeadline = deadlines.schedule(exchange::close, 15, TimeUnit.SECONDS);
+                try {
+                    writer.write(frame == null ? ": ping\n\n" : frame);
+                    writer.flush();
+                } finally { writeDeadline.cancel(false); }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -189,10 +233,9 @@ public final class HttpTransport implements Lifecycle.Component {
      * requests, so an orchestrator waits for something useful rather than for a live process.
      */
     private void health(HttpExchange exchange) throws IOException {
+        requirePath(exchange, "/api/health");
         boolean ready = Boolean.TRUE.equals(readiness.get());
-        writeJson(exchange, ready ? 200 : 503, Map.of(
-                "status", ready ? "ready" : "starting",
-                "eventClients", stream.connectedClients()));
+        writeJson(exchange, ready ? 200 : 503, Map.of("status", ready ? "ready" : "starting"));
     }
 
     private RequestContext context(HttpExchange exchange, Cancellation cancellation) {
@@ -200,28 +243,74 @@ public final class HttpTransport implements Lifecycle.Component {
         String token = authorization != null && authorization.regionMatches(true, 0, "Bearer ", 0, 7)
                 ? authorization.substring(7).trim()
                 : null;
+        if (token != null && token.length() > MAX_BEARER_CHARS) {
+            token = null;
+        }
         return gateway.contextFor(token, exchange.getRequestHeaders().getFirst("X-Forge-Workspace"),
                 cancellation);
     }
 
     private Map<String, Object> readBody(HttpExchange exchange) throws IOException {
         String length = exchange.getRequestHeaders().getFirst("Content-Length");
-        if (length != null && Long.parseLong(length) > MAX_BODY_BYTES) {
-            throw ForgeException.invalidArgument("Request body is too large");
+        if (length != null) {
+            try {
+                if (Long.parseLong(length) > MAX_BODY_BYTES) {
+                    throw ForgeException.invalidArgument("Request body is too large");
+                }
+            } catch (NumberFormatException e) {
+                throw ForgeException.invalidArgument("Invalid Content-Length");
+            }
         }
+        ScheduledFuture<?> deadline = deadlines.schedule(exchange::close,
+                requestBodyTimeout.toMillis(), TimeUnit.MILLISECONDS);
         try (InputStream input = exchange.getRequestBody()) {
             return json.readObject(new LimitedInputStream(input, MAX_BODY_BYTES));
+        } finally {
+            deadline.cancel(false);
         }
     }
 
+
+    private void checkLoginRate(HttpExchange exchange) {
+        String key = exchange.getRemoteAddress() == null
+                ? "unknown"
+                : exchange.getRemoteAddress().getAddress().getHostAddress();
+        long now = System.currentTimeMillis();
+        LoginWindow window;
+        synchronized (loginWindows) {
+            loginWindows.entrySet().removeIf(entry -> now - entry.getValue().startedAt > 120_000);
+            if (!loginWindows.containsKey(key) && loginWindows.size() >= 4096)
+                throw ForgeException.unavailable("Login temporarily rate limited");
+            window = loginWindows.computeIfAbsent(key, ignored -> new LoginWindow());
+        }
+        synchronized (window) {
+            if (now - window.startedAt >= 60_000) {
+                window.startedAt = now;
+                window.attempts = 0;
+            }
+            if (++window.attempts > MAX_LOGIN_ATTEMPTS_PER_MINUTE) {
+                throw ForgeException.unavailable("Too many login attempts; try again shortly");
+            }
+        }
+        if (loginWindows.size() > 4096) {
+            loginWindows.entrySet().removeIf(entry -> now - entry.getValue().startedAt > 120_000);
+        }
+    }
+
+    private static void requirePath(HttpExchange exchange, String expected) {
+        if (!expected.equals(exchange.getRequestURI().getPath())) {
+            throw ForgeException.notFound("Unknown endpoint");
+        }
+    }
     private void writeJson(HttpExchange exchange, int status, Object value) throws IOException {
         byte[] body = json.write(value).getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
         exchange.getResponseHeaders().set("Cache-Control", "no-store");
         exchange.sendResponseHeaders(status, body.length);
+        ScheduledFuture<?> writeDeadline = deadlines.schedule(exchange::close, 15, TimeUnit.SECONDS);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
-        }
+        } finally { writeDeadline.cancel(false); }
     }
 
     private static void securityHeaders(HttpExchange exchange) {
@@ -266,7 +355,7 @@ public final class HttpTransport implements Lifecycle.Component {
             case CONFLICT -> 409;
             case UNAUTHORIZED -> 401;
             case FORBIDDEN -> 403;
-            case UNAVAILABLE -> 409;
+            case UNAVAILABLE -> 503;
             case UNSUPPORTED -> 501;
             case CANCELLED -> 499;
             case INTERNAL_FAILURE -> 500;

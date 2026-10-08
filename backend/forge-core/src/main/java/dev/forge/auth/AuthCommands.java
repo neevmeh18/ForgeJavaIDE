@@ -35,19 +35,27 @@ public final class AuthCommands {
 
     public void register(CommandRegistry commands, QueryRegistry queries) {
         commands.register(
-                CommandDescriptor.of("auth.login", "Authentication", "Sign In")
+                CommandDescriptor.of("auth.login", "Authentication", "Sign In") .withArguments(new CommandDescriptor.Argument("username", "string", "username"), new CommandDescriptor.Argument("password", "string", "password"))
                         .describedAs("Exchanges credentials for a session token")
                         .anonymous().asSensitive(),
                 ctx -> {
                     String username = ctx.args().requiredString("username");
-                    char[] secret = ctx.args().requiredString("password").toCharArray();
+                    String password = ctx.args().requiredString("password");
+                    if (username.length() > 128 || password.length() > 1024) {
+                        throw ForgeException.invalidArgument("Credentials exceed the supported length");
+                    }
+                    String client = ctx.args().string("client").orElse("");
+                    if (client.length() > 512) {
+                        throw ForgeException.invalidArgument("Client description is too long");
+                    }
+                    char[] secret = password.toCharArray();
                     AuthenticationProvider.Credentials credentials =
                             new AuthenticationProvider.Credentials(username, secret, java.util.Map.of());
                     try {
                         User user = provider.authenticate(credentials)
                                 .orElseThrow(() -> ForgeException.unauthorized("Invalid username or password"));
                         SessionService.Issued issued =
-                                sessions.issue(user, ctx.args().string("client").orElse(""));
+                                sessions.issue(user, client);
                         return new LoginResult(issued.token(), issued.session().id(), user, issued.expiresAt());
                     } finally {
                         credentials.wipe();

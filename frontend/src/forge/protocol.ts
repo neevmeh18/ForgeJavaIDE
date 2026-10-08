@@ -76,6 +76,8 @@ export interface CommandView {
   undoable: boolean;
   sensitive: boolean;
   source: string;
+  paletteVisible?: boolean;
+  arguments?: Array<{ name: string; type: string; description: string }>;
 }
 
 export interface MenuItem {
