@@ -21,7 +21,7 @@ showLogin(client, root)
   .then((login) => {
     client.setToken(login.token);
     const workbench = new Workbench(root, client);
-    return workbench.start(login.user.displayName);
+    return workbench.start(login.user.displayName, login.workspaceId);
   })
   .catch((error: unknown) => {
     console.error('Workbench failed to start', error);
