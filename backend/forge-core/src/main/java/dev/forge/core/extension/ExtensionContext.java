@@ -18,9 +18,13 @@ import dev.forge.core.contrib.ContributionRegistry;
 import dev.forge.core.event.Event;
 import dev.forge.core.event.EventBus;
 import dev.forge.core.query.QueryRegistry;
+import dev.forge.settings.Settings;
+import dev.forge.settings.SettingsService;
+import dev.forge.state.StateStore;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 /**
  * <b>The public Extension API.</b> This class is the entire surface an extension may program
@@ -39,9 +43,12 @@ public final class ExtensionContext {
      * Namespaces owned by the framework. Extensions are refused registration inside them so a
      * third party cannot claim, say, {@code file.delete} by registering it first.
      */
-    private static final Set<String> RESERVED = Set.of(
+    static final Set<String> RESERVED = Set.of(
             "auth", "command", "debug", "editor", "extension", "file", "language",
             "scm", "search", "settings", "state", "task", "terminal", "workbench", "workspace");
+
+    /** Valid state/setting key: starts with a letter or digit, then letters/digits/dots/underscores/hyphens. */
+    private static final Pattern VALID_KEY = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}");
 
     private final ExtensionId extensionId;
     private final CommandRegistry commands;
@@ -49,11 +56,14 @@ public final class ExtensionContext {
     private final CommandExecutor executor;
     private final EventBus events;
     private final ContributionRegistry contributions;
+    private final StateStore stateStore;
+    private final SettingsService settingsService;
     private final Lifecycle.Store disposables;
     private final Log log;
 
     ExtensionContext(ExtensionId extensionId, CommandRegistry commands, QueryRegistry queries,
                      CommandExecutor executor, EventBus events, ContributionRegistry contributions,
+                     StateStore stateStore, SettingsService settingsService,
                      Lifecycle.Store disposables) {
         this.extensionId = extensionId;
         this.commands = commands;
@@ -61,6 +71,8 @@ public final class ExtensionContext {
         this.executor = executor;
         this.events = events;
         this.contributions = contributions;
+        this.stateStore = stateStore;
+        this.settingsService = settingsService;
         this.disposables = disposables;
         this.log = Log.of(Extension.class).with("extensionId", extensionId);
     }
@@ -141,6 +153,105 @@ public final class ExtensionContext {
         disposables.add(disposable);
     }
 
+    // -----------------------------------------------------------------------
+    // Extension-owned state
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the value stored for {@code key} in this extension's own state, or null
+     * if no value has been set.
+     *
+     * @throws ForgeException with {@code FORBIDDEN} if the key namespace is reserved
+     * @throws ForgeException with {@code INVALID_ARGUMENT} if the key format is invalid
+     */
+    public Object getState(String key) {
+        requireValidKey(key);
+        requireOwnNamespace(namespace(key), key);
+        return stateStore.get(StateStore.Scope.APPLICATION, extensionId.value(), key).orElse(null);
+    }
+
+    /**
+     * Stores {@code value} under {@code key} in this extension's own state. Passing
+     * null is equivalent to {@link #deleteState}.
+     *
+     * @throws ForgeException with {@code FORBIDDEN} if the key namespace is reserved
+     * @throws ForgeException with {@code INVALID_ARGUMENT} if the key format is invalid
+     */
+    public void setState(String key, Object value) {
+        requireValidKey(key);
+        requireOwnNamespace(namespace(key), key);
+        stateStore.put(StateStore.Scope.APPLICATION, extensionId.value(), key, value);
+    }
+
+    /**
+     * Removes {@code key} from this extension's state. Does nothing if the key
+     * does not exist.
+     *
+     * @throws ForgeException with {@code FORBIDDEN} if the key namespace is reserved
+     * @throws ForgeException with {@code INVALID_ARGUMENT} if the key format is invalid
+     */
+    public void deleteState(String key) {
+        requireValidKey(key);
+        requireOwnNamespace(namespace(key), key);
+        stateStore.put(StateStore.Scope.APPLICATION, extensionId.value(), key, null);
+    }
+
+    /**
+     * Returns every key/value pair stored in this extension's state. The returned map
+     * is unmodifiable; changes must be made through {@link #setState} / {@link #deleteState}.
+     */
+    public Map<String, Object> getAllState() {
+        return stateStore.read(StateStore.Scope.APPLICATION, extensionId.value());
+    }
+
+    /**
+     * Removes all state belonging to this extension.
+     */
+    public void clearState() {
+        stateStore.clear(StateStore.Scope.APPLICATION, extensionId.value());
+    }
+
+    // -----------------------------------------------------------------------
+    // Extension-owned settings
+    // -----------------------------------------------------------------------
+
+    /**
+     * Declares a typed setting contributed by this extension. The setting's key must
+     * not belong to a reserved framework namespace.
+     *
+     * <p>If a setting with the same key has already been declared, a
+     * {@code CONFLICT} error is raised — the extension should use a more specific
+     * key or the {@link #setState state} API for mutable per-extension values.
+     *
+     * <p>The definition is automatically removed when the extension is deactivated.
+     *
+     * @throws ForgeException with {@code FORBIDDEN} if the key namespace is reserved
+     * @throws ForgeException with {@code CONFLICT} if the key is already registered
+     */
+    public void defineSetting(Settings.Definition definition) {
+        String key = definition.key();
+        requireValidKey(key);
+        requireOwnNamespace(namespace(key), key);
+        onDispose(settingsService.define(extensionId, definition));
+    }
+
+    /**
+     * Returns the resolved value of the setting identified by {@code key}, or the
+     * extension's declared default when no user or workspace override exists.
+     *
+     * <p>To obtain the fully resolved value including current user and workspace
+     * overrides, use {@link #runQuery runQuery("settings.resolved", ...)} with
+     * the appropriate {@link RequestContext}.
+     *
+     * @throws ForgeException with {@code FORBIDDEN} if the key namespace is reserved
+     * @throws ForgeException with {@code NOT_FOUND} if the setting has not been defined
+     */
+    public Object getSetting(String key) {
+        requireValidKey(key);
+        requireOwnNamespace(namespace(key), key);
+        return settingsService.resolve(key, null, null).value();
+    }
+
     /** An event raised by an extension; always namespaced by its extension id. */
     public record ExtensionEvent(String type, ExtensionId extensionId, WorkspaceId workspaceId,
                                  Map<String, Object> payload) implements Event {
@@ -151,6 +262,18 @@ public final class ExtensionContext {
             throw ForgeException.forbidden(
                     "Extensions may not register into the reserved namespace '" + namespace + "': " + id)
                     .with("extensionId", extensionId.value());
+        }
+    }
+
+    /** The first component of a dotted key, or the key itself if there is no dot. */
+    private static String namespace(String key) {
+        int dot = key.indexOf('.');
+        return dot < 0 ? key : key.substring(0, dot);
+    }
+
+    private static void requireValidKey(String key) {
+        if (!VALID_KEY.matcher(key).matches()) {
+            throw ForgeException.invalidArgument("Invalid state/setting key: " + key);
         }
     }
 }
