@@ -866,3 +866,66 @@ button:focus-visible {
 .toast-close {
   color: var(--text-muted);
 }
+
+.backup-body {
+  padding: 12px 10px;
+}
+
+.backup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.backup-card-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.backup-card-copy,
+.backup-status {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.backup-label {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.backup-destination {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.backup-primary,
+.backup-secondary {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.backup-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.backup-secondary:hover,
+.backup-primary:hover {
+  filter: brightness(1.08);
+}

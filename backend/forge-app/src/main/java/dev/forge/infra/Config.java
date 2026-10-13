@@ -2,6 +2,8 @@ package dev.forge.infra;
 
 import dev.forge.core.ForgeException;
 import dev.forge.core.Log;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -13,6 +15,8 @@ public record Config(
         Path dataDir,
         Path webRoot,
         Path extensionsDir,
+        String backupWorkerUrl,
+        String backupWorkerToken,
         String logLevel,
         String authUsername,
         String authPassword,
@@ -50,6 +54,8 @@ public record Config(
                 Path.of(env("IDE_DATA_DIR", "/data")),
                 Path.of(env("IDE_WEB_ROOT", "/app/web")),
                 Path.of(env("IDE_EXTENSIONS_DIR", "/app/extensions")),
+                env("IDE_BACKUP_WORKER_URL", "http://backup-worker:8081"),
+                secret("IDE_BACKUP_WORKER_TOKEN_FILE", "IDE_BACKUP_WORKER_TOKEN"),
                 env("IDE_LOG_LEVEL", "INFO"),
                 env("IDE_AUTH_USER", "developer"),
                 password,
@@ -78,6 +84,21 @@ public record Config(
         if (authPassword == null || authPassword.length() < 12 || DEVELOPMENT_PASSWORD.equals(authPassword)) {
             throw ForgeException.invalidArgument("Set IDE_AUTH_PASSWORD to a unique password of at least 12 characters");
         }
+        if (backupWorkerToken == null || backupWorkerToken.length() < 24) {
+            throw ForgeException.invalidArgument("Internal backup service credential is missing or invalid");
+        }
+    }
+
+    private static String secret(String fileVariable, String valueVariable) {
+        String file = env(fileVariable, "");
+        if (!file.isBlank()) {
+            try {
+                return Files.readString(Path.of(file)).trim();
+            } catch (IOException e) {
+                throw ForgeException.invalidArgument("Unable to read internal service credential");
+            }
+        }
+        return env(valueVariable, "");
     }
 
     private static String env(String name, String fallback) {
