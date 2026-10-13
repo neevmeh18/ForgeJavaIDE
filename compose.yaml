@@ -4,6 +4,13 @@
 #   IDE_AUTH_PASSWORD='choose-a-strong-password' docker compose up --build
 
 services:
+  backup-secret-init:
+    image: python:3.12-alpine
+    volumes:
+      - forge-backup-secret:/secret
+    command: ["python", "-c", "import pathlib,secrets; p=pathlib.Path('/secret/token'); p.write_text(secrets.token_hex(32)) if not p.exists() else None; p.chmod(0o444)"]
+    restart: "no"
+
   forge:
     build:
       context: .
@@ -22,9 +29,12 @@ services:
       IDE_TERMINAL_ENABLED: "${IDE_TERMINAL_ENABLED:-true}"
       IDE_MAX_WORKSPACE_MB: "${IDE_MAX_WORKSPACE_MB:-2048}"
       IDE_MAX_STATE_MB: "${IDE_MAX_STATE_MB:-32}"
+      IDE_BACKUP_WORKER_URL: "http://backup-worker:8081"
+      IDE_BACKUP_WORKER_TOKEN_FILE: "/run/forge-backup-secret/token"
     volumes:
       - "${IDE_WORKSPACE:-./workspace}:/workspace"
       - forge-data:/data
+      - forge-backup-secret:/run/forge-backup-secret:ro
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -33,6 +43,11 @@ services:
     mem_limit: "${IDE_MEMORY_LIMIT:-4g}"
     cpus: "${IDE_CPU_LIMIT:-4.0}"
     restart: unless-stopped
+    depends_on:
+      backup-secret-init:
+        condition: service_completed_successfully
+      backup-worker:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
       interval: 10s
@@ -40,5 +55,33 @@ services:
       start_period: 25s
       retries: 10
 
+  backup-worker:
+    image: python:3.12-alpine
+    environment:
+      BACKUP_WORKER_TOKEN_FILE: "/run/forge-backup-secret/token"
+    volumes:
+      - "${IDE_WORKSPACE:-./workspace}:/workspace:ro"
+      - forge-backups:/backups
+      - ./backup-worker/worker.py:/app/worker.py:ro
+      - forge-backup-secret:/run/forge-backup-secret:ro
+    working_dir: /app
+    command: ["python", "/app/worker.py"]
+    user: "0:0"
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: "512m"
+    cpus: "1.0"
+    restart: unless-stopped
+    depends_on:
+      backup-secret-init:
+        condition: service_completed_successfully
+
 volumes:
   forge-data:
+  forge-backups:
+  forge-backup-secret:
