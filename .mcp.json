@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "lighthouse": {
+      "command": "reware-lighthouse",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "LIGHTHOUSE_PROJECT": "neevmeh18/forgejavaide"
+      }
+    }
+  }
+}

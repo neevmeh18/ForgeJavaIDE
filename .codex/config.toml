@@ -1,0 +1,9 @@
+[mcp_servers.lighthouse]
+command = "reware-lighthouse"
+args = ["mcp"]
+
+[mcp_servers.lighthouse.env]
+LIGHTHOUSE_PROJECT = "neevmeh18/forgejavaide"
+
+[mcp_servers.lighthouse.tools.lighthouse_enhance_prompt]
+approval_mode = "approve"

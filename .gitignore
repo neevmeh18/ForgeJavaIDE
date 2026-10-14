@@ -9,3 +9,4 @@ dist/
 .forge-data/
 workspace/*
 !workspace/.gitkeep
+.lighthouse/
