@@ -13,9 +13,11 @@ import java.util.Map;
 public final class WorkspaceCommands {
 
     private final WorkspaceService workspaces;
+    private final WorkspaceAccessService access;
 
-    public WorkspaceCommands(WorkspaceService workspaces) {
+    public WorkspaceCommands(WorkspaceService workspaces, WorkspaceAccessService access) {
         this.workspaces = workspaces;
+        this.access = access;
     }
 
     public void register(CommandRegistry commands, QueryRegistry queries, ContributionRegistry contributions) {
@@ -23,7 +25,11 @@ public final class WorkspaceCommands {
                 CommandDescriptor.of("workspace.open", "Workspace", "Open Workspace")
                         .describedAs("Opens a workspace and attaches the current session to it")
                         .asSensitive(),
-                ctx -> workspaces.open(WorkspaceId.of(ctx.args().requiredString("workspaceId")), ctx.sessionId()));
+                ctx -> {
+                    WorkspaceId id = WorkspaceId.of(ctx.args().requiredString("workspaceId"));
+                    access.noteOpened(ctx.sessionId(), id, ctx.requireUser());
+                    return workspaces.open(id, ctx.sessionId());
+                });
 
         commands.register(
                 CommandDescriptor.of("workspace.close", "Workspace", "Close Workspace")
